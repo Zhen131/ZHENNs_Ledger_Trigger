@@ -38,9 +38,15 @@ after(async () => {
   rmSync(CHILD_CONFIG_DIR, { recursive: true, force: true });
 });
 
-/** An in-process chain reporting `chainId`. */
+/**
+ * An in-process chain reporting `chainId`: always Hardhat's in-process network
+ * ("default"), whatever network was selected with --network or HARDHAT_NETWORK.
+ */
 async function inProcessChain(chainId: number) {
-  const connection = await network.create({ override: { chainId } });
+  const connection = await network.create({
+    network: "default",
+    override: { chainId },
+  });
   const publicClient = await connection.viem.getPublicClient();
   return {
     request: publicClient.request as unknown as EIP1193RequestFn,

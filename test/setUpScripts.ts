@@ -4,6 +4,11 @@
 // machine, with no network behind it, so the send gate can be tested on a
 // chain it must treat as not local.
 //
+// The chain is always Hardhat's in-process one (the network named "default"),
+// whatever network was selected with --network or HARDHAT_NETWORK. Tests that
+// use it pass the send gate with the confirmation sentence, and that must
+// never open a connection to another node.
+//
 // `withParts` also deploys the full set directly, without the scripts:
 // MockUSDC, MockPriceFeed (8 decimals, 2000 USD), MockSwapVenue (no fee,
 // stocked with 10 ETH) and LedgerTrigger with the default limits, and mints
@@ -15,14 +20,19 @@ import { network } from "hardhat";
 
 const ONE_USDC = 1_000_000n;
 const ONE_ETH = 10n ** 18n;
+/** Hardhat's built-in in-process network; this configuration does not change it. */
+const IN_PROCESS_NETWORK = "default";
 
 export async function setUpScripts(
   options: { readonly chainId?: number } = {},
 ) {
   const connection = await network.create(
     options.chainId === undefined
-      ? undefined
-      : { override: { chainId: options.chainId } },
+      ? { network: IN_PROCESS_NETWORK }
+      : {
+          network: IN_PROCESS_NETWORK,
+          override: { chainId: options.chainId },
+        },
   );
   const { viem } = connection;
   const publicClient = await viem.getPublicClient();

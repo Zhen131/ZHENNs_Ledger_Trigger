@@ -40,9 +40,16 @@ after(async () => {
   rmSync(CHILD_CONFIG_DIR, { recursive: true, force: true });
 });
 
-/** An in-process chain that reports `chainId`, served at a local URL. */
+/**
+ * An in-process chain that reports `chainId`, served at a local URL. It is
+ * always Hardhat's in-process network ("default"), whatever network was
+ * selected with --network or HARDHAT_NETWORK.
+ */
 async function servedChain(chainId: number) {
-  const connection = await network.create({ override: { chainId } });
+  const connection = await network.create({
+    network: "default",
+    override: { chainId },
+  });
   const publicClient = await connection.viem.getPublicClient();
   const request = publicClient.request as unknown as EIP1193RequestFn;
   const server = await serveOverHttp((args) => request(args as never));
