@@ -453,6 +453,8 @@ contract LedgerTrigger is ReentrancyGuard {
         orderExists(orderId)
         onlyOrderOwnerOrExecutor(orderId)
     {
+        // The modifiers have run, in this order: the reentrancy guard, step 0 (the order
+        // exists) and step 1 (the caller is the owner or the executor).
         Order storage order = orders[orderId];
         // Steps 2 to 4: status and expiry, price, allowance and balance.
         uint256 price = _requireFillable(orderId, order);
