@@ -377,6 +377,8 @@ export async function deployWithExternalParts(input: {
   readonly settings: DeploySettings;
   readonly usdc: Address;
   readonly priceFeed: Address;
+  /** Told what the check found, before anything is sent. */
+  readonly onChecked?: (check: PartsCheck) => void;
 }): Promise<{ readonly check: PartsCheck; readonly report: DeploymentReport }> {
   const { viem, settings } = input;
   const publicClient = await viem.getPublicClient();
@@ -390,6 +392,7 @@ export async function deployWithExternalParts(input: {
     throw new ScriptError("The network has no account to deploy from.");
   }
   const check = await checkExternalParts(viem, input.usdc, input.priceFeed);
+  input.onChecked?.(check);
   // Converting the limit first means a bad amount stops the run before any
   // transaction is sent.
   parseDecimal(
