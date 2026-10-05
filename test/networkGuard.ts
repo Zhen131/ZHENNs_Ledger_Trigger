@@ -25,9 +25,9 @@ import { serveOverHttp } from "./serveOverHttp.ts";
 // The network guard refuses transactions to any chain but Hardhat's local
 // one, on every network connection, whatever started the code. A chain that
 // is not local is played by an in-process chain that reports another chain ID,
-// served over HTTP on 127.0.0.1. Each test uses its own chain ID: a chain the
-// send gate has let through stays let through for the rest of the process.
-// Nothing here connects to any other network, and no test selects sepolia.
+// served over HTTP on 127.0.0.1. Each test uses its own chain ID, so that a
+// failure points at one test. Nothing here connects to any other network, and
+// no test selects sepolia.
 
 const ROOT = path.join(import.meta.dirname, "..");
 const HARDHAT = path.join(ROOT, "node_modules", ".bin", "hardhat");
