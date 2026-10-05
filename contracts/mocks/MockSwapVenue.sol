@@ -91,7 +91,7 @@ contract MockSwapVenue is ISwapVenue {
     /// @notice Accepts ETH from anyone. This is how the venue is stocked with ETH to pay out.
     /// @dev Anyone can call it; it never reverts. There is no way to take the ETH back out other
     /// than swapping USDC for it. The body is empty on purpose: receiving is the whole job.
-    receive() external payable {} // solhint-disable-line no-empty-blocks
+    receive() external payable {}
 
     /// @inheritdoc ISwapVenue
     /// @dev Anyone can call it; the caller approves the venue for `usdcAmount` USDC first.
@@ -117,7 +117,6 @@ contract MockSwapVenue is ISwapVenue {
         }
 
         usdc.safeTransferFrom(msg.sender, address(this), usdcAmount);
-        // solhint-disable-next-line avoid-low-level-calls -- plain ETH transfer with empty calldata, the only low-level call the project allows.
         (bool sent, ) = msg.sender.call{value: ethOut}("");
         if (!sent) revert EthTransferFailed();
     }
