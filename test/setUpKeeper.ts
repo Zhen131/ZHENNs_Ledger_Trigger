@@ -96,10 +96,13 @@ export async function setUpKeeper(options: SetUpOptions = {}) {
     const forwardTo = f.publicClient.request as unknown as EIP1193RequestFn;
     return createPublicClient({
       chain: f.publicClient.chain,
-      transport: custom({
-        request: (args: { method: string; params?: unknown }) =>
-          request(args, () => forwardTo(args as never)),
-      }),
+      transport: custom(
+        {
+          request: (args: { method: string; params?: unknown }) =>
+            request(args, () => forwardTo(args as never)),
+        },
+        { retryCount: 0 },
+      ),
     });
   }
 

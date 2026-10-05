@@ -9,7 +9,8 @@
   },
   "scripts": {
     "check": "node scripts/check.ts",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "keeper": "node keeper/main.ts"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox-viem": "^5.0.7",

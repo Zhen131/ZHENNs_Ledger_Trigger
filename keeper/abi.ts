@@ -43,7 +43,7 @@ function readAbi(sourceFile: string, contractName: string): Abi {
     artifact = JSON.parse(readFileSync(file, "utf8"));
   } catch {
     throw new BuildOutputError(
-      `the build output of ${contractName} could not be read; run "npx hardhat build" first`,
+      `The build output of ${contractName} could not be read. Run npx hardhat build first.`,
     );
   }
   if (
@@ -55,7 +55,7 @@ function readAbi(sourceFile: string, contractName: string): Abi {
     !Array.isArray(artifact.abi)
   ) {
     throw new BuildOutputError(
-      `the build output of ${contractName} has no ABI; run "npx hardhat build" again`,
+      `The build output of ${contractName} has no ABI. Run npx hardhat build again.`,
     );
   }
   return artifact.abi as Abi;

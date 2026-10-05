@@ -9,6 +9,11 @@
 //   so a problem is caught before the file is ever committed;
 // - every commit reachable from HEAD, from the very first one.
 //
+// A scanned file whose name, or the name of a folder on its path, starts with
+// ".env" is flagged whatever it contains: environment files hold keys. The
+// .gitignore file keeps such files out of git, and so out of this scan, as
+// long as nobody adds one by force.
+//
 // Exit code: 0 when nothing is found, 1 when there are findings (each one is
 // printed), 2 when the scan itself could not run, including when the commit
 // history cannot be read back reliably (no commit is ever skipped silently).
@@ -526,10 +531,31 @@ function listFiles(root: string): string[] {
 
 type FileScan = { readonly findings: Finding[]; readonly binary: boolean };
 
+const ENV_FILE_RULE_ID = "file/env-file";
+
+/**
+ * True when the file, or a folder on its path, has a name that starts with
+ * ".env". Such files hold keys (a private key, a node URL with its access
+ * key) and must never be committed, so the name alone is enough to flag one,
+ * whatever it contains.
+ */
+export function isEnvFilePath(relativePath: string): boolean {
+  return relativePath.split("/").some((part) => part.startsWith(".env"));
+}
+
 function scanFile(root: string, relativePath: string): FileScan {
   const findings = scanText(relativePath, relativePath, {
     withLines: false,
   }).map((finding) => ({ ...finding, detail: `file name: ${finding.detail}` }));
+  if (isEnvFilePath(relativePath)) {
+    findings.push({
+      where: relativePath,
+      line: undefined,
+      rule: ENV_FILE_RULE_ID,
+      detail:
+        "file name: a name starting with .env (environment files hold keys)",
+    });
+  }
   const absolute = path.join(root, relativePath);
   let stats;
   try {

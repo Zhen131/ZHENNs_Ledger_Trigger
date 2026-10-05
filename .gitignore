@@ -10,9 +10,8 @@
 # TypeScript output
 /dist
 
-# Environment files must never be committed
-.env
-.env.*
+# Environment files must never be committed: every name starting with .env
+.env*
 
 # OS files
 .DS_Store

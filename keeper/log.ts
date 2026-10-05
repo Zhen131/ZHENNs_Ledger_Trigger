@@ -9,7 +9,7 @@
 // the node URL, which may carry an access key. Errors are logged as this
 // project's own sentence, a category and the error class names.
 
-import { Cause, type Classification } from "./classify.ts";
+import { Cause, errorTypes, type Classification } from "./classify.ts";
 
 /** What the keeper did. */
 export const Action = {
@@ -51,6 +51,23 @@ export function formatLogLine(entry: LogEntry, time: Date): string {
       ` ${key}=${PLAIN_VALUE.test(value) ? value : JSON.stringify(value)}`,
   );
   return `${time.toISOString()} order=${order} action=${entry.action} reason=${entry.reason}${details.join("")}`;
+}
+
+/**
+ * The log entry for an error the keeper's own code did not expect, at `step`.
+ * It names the error's classes only, never its message.
+ */
+export function internalErrorEntry(step: string, error: unknown): LogEntry {
+  return {
+    orderId: undefined,
+    action: Action.Error,
+    reason: "internal-error",
+    details: [
+      ["step", step],
+      ["message", "The keeper met an error it did not expect."],
+      ["types", errorTypes(error).join(">") || "unknown"],
+    ],
+  };
 }
 
 /**

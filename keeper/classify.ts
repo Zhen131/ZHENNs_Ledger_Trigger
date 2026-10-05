@@ -84,8 +84,11 @@ export type Classification =
 
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
-/** Class names along the cause chain, kept only when they are plain identifiers. */
-function errorTypes(error: unknown): string[] {
+/**
+ * Class names along the cause chain of `error`, outermost first, kept only
+ * when they are plain identifiers. Never the messages.
+ */
+export function errorTypes(error: unknown): string[] {
   const names: string[] = [];
   let current: unknown = error;
   for (let depth = 0; depth < 10 && current instanceof Error; depth += 1) {
