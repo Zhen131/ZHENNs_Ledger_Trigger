@@ -10,7 +10,13 @@
 // - every commit reachable from HEAD, from the very first one.
 //
 // Exit code: 0 when nothing is found, 1 when there are findings (each one is
-// printed), 2 when the scan itself could not run.
+// printed), 2 when the scan itself could not run, including when the commit
+// history cannot be read back reliably (no commit is ever skipped silently).
+//
+// A file that contains a zero byte is read as binary. For binary files only
+// the file name and the key-material rules apply (private keys, seed phrases,
+// URLs with keys), because random bytes often spell short words by chance.
+// The summary line says how many files were read as binary.
 //
 // Several words this scan looks for would make it flag itself if they were
 // written out in one piece here. They are split with a one-letter character
@@ -38,6 +44,8 @@ export type Finding = {
 export type ScanResult = {
   readonly root: string;
   readonly fileCount: number;
+  /** How many of the scanned files were read as binary. */
+  readonly binaryFileCount: number;
   readonly commitCount: number;
   readonly findings: readonly Finding[];
 };
@@ -48,6 +56,11 @@ type PatternRule = {
   readonly pattern: RegExp;
   /** When true, the matched text is not echoed in the report. */
   readonly secret: boolean;
+  /**
+   * When true, the rule looks for key material and also applies to the
+   * contents of binary files.
+   */
+  readonly keyMaterial?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -66,8 +79,8 @@ export const CONTENT_RULES: readonly PatternRule[] = [
   {
     id: "content/private-log-code",
     description:
-      "private planning-log code (two digits, a capital letter, optional -R, then _W and digits)",
-    pattern: /(?<!\d)\d{2}[A-Z](?:-R)?_W\d+/g,
+      "private planning-log code (two or three digits, a capital letter, optional -R, then _W and digits)",
+    pattern: /(?<!\d)\d{2,3}[A-Z](?:-R)?_W\d+/g,
     secret: false,
   },
   {
@@ -106,14 +119,68 @@ export const CONTENT_RULES: readonly PatternRule[] = [
       "run of 64 or more hex digits (private-key length), with or without 0x",
     pattern: /[0-9a-fA-F]{64,}/g,
     secret: true,
+    keyMaterial: true,
   },
   {
     id: "content/seed-phrase-word",
     description: "the word used for wallet seed phrases",
     pattern: /mn[e]monic/gi,
     secret: false,
+    keyMaterial: true,
   },
 ];
+
+// Node providers put the access key in the URL path. Each pattern captures
+// the path segment where the key sits; `looksLikeKey` then decides. Keys may
+// contain "-" and "_", which split them into short runs that the generic
+// URL rule below can miss.
+const PROVIDER_KEY_RULE_ID = "content/provider-key-url";
+const PROVIDER_KEY_PATHS: readonly RegExp[] = [
+  // Alchemy: <network>.g.alchemy.com/v2/<key>, also /nft/v3/<key> and the
+  // older alchemyapi.io host.
+  /\balchemy(?:api)?\.(?:com|io)(?::\d+)?\/(?:[a-z]+\/)?v\d+\/([\w-]+)/gi,
+  // Infura: <network>.infura.io/v3/<key> and /ws/v3/<key>.
+  /\binfura\.io(?::\d+)?\/(?:ws\/)?v3\/([\w-]+)/gi,
+  // QuickNode: <name>.<network>.quiknode.pro/<token>/
+  /\bquiknode\.pro(?::\d+)?\/([\w-]+)/gi,
+  // Ankr: rpc.ankr.com/<network>/<key>
+  /\bankr\.com(?::\d+)?\/[\w-]+\/([\w-]+)/gi,
+  // Chainstack: <node>.p2pify.com/<key>
+  /\bp2pify\.com(?::\d+)?\/([\w-]+)/gi,
+  // Blast: <network>.blastapi.io/<key>
+  /\bblastapi\.io(?::\d+)?\/([\w-]+)/gi,
+  // GetBlock: go.getblock.io/<key>
+  /\bgetblock\.io(?::\d+)?\/([\w-]+)/gi,
+];
+
+/**
+ * True when a URL path segment has the shape of an access key: at least 20
+ * letters, digits, "-" or "_", and not only lower-case words joined by
+ * hyphens (which is how page names in documentation links look).
+ */
+export function looksLikeKey(segment: string): boolean {
+  return segment.length >= 20 && /[A-Z0-9_]/.test(segment);
+}
+
+/** Start index of every node-provider key found in `text`. */
+function providerKeyPositions(text: string): number[] {
+  const positions: number[] = [];
+  for (const pattern of PROVIDER_KEY_PATHS) {
+    for (const match of text.matchAll(pattern)) {
+      if (looksLikeKey(match[1] ?? "")) positions.push(match.index);
+    }
+  }
+  return positions.sort((a, b) => a - b);
+}
+
+/**
+ * True when `text` holds a node-provider URL (Alchemy, Infura, QuickNode,
+ * Ankr, Chainstack, Blast, GetBlock) with a key in its path. The scheme is
+ * optional, so a bare host name followed by the key is caught too.
+ */
+export function hasProviderKey(text: string): boolean {
+  return providerKeyPositions(text).length > 0;
+}
 
 const URL_RULE_ID = "content/keyed-url";
 const URL_PATTERN = /\b(?:https?|wss?):\/\/[^\s"'`<>()[\]{}\\]+/gi;
@@ -187,6 +254,13 @@ export const CONTRACT_RULES: readonly PatternRule[] = [
     id: "contract/assembly-call",
     description: "bare call(...) as used in inline assembly",
     pattern: /(?<![\w$]|\.\s*)call\s*\(/g,
+    secret: false,
+  },
+  {
+    id: "contract/assembly-origin",
+    description:
+      "bare origin() as used in inline assembly (the same as tx.origin)",
+    pattern: /(?<![\w$]|\.\s*)origin\s*\(/g,
     secret: false,
   },
 ];
@@ -363,20 +437,41 @@ function scanUrls(
   return findings;
 }
 
-/** Content rules for any text: a file body or a commit message. */
+function scanProviderKeys(
+  where: string,
+  text: string,
+  lineOf: (index: number) => number | undefined,
+): Finding[] {
+  return providerKeyPositions(text).map((index) => ({
+    where,
+    line: lineOf(index),
+    rule: PROVIDER_KEY_RULE_ID,
+    detail: "node-provider URL with what looks like an access key in its path",
+  }));
+}
+
+/**
+ * Content rules for any text: a file body or a commit message. With
+ * `keyMaterialOnly`, only the rules that look for key material run (private
+ * keys, seed phrases, URLs with keys); this is how binary files are read.
+ */
 export function scanText(
   where: string,
   text: string,
-  options: { readonly skipHan?: boolean; readonly withLines?: boolean } = {},
+  options: {
+    readonly keyMaterialOnly?: boolean;
+    readonly withLines?: boolean;
+  } = {},
 ): Finding[] {
   const lineOf = (index: number) =>
     options.withLines === false ? undefined : lineAt(text, index);
-  const rules = options.skipHan
-    ? CONTENT_RULES.filter((rule) => rule !== HAN_RULE)
+  const rules = options.keyMaterialOnly
+    ? CONTENT_RULES.filter((rule) => rule.keyMaterial === true)
     : CONTENT_RULES;
   return [
     ...applyRules(where, text, rules, lineOf),
     ...scanUrls(where, text, lineOf),
+    ...scanProviderKeys(where, text, lineOf),
   ];
 }
 
@@ -428,7 +523,9 @@ function listFiles(root: string): string[] {
   return [...new Set(output.split("\0").filter((name) => name !== ""))].sort();
 }
 
-function scanFile(root: string, relativePath: string): Finding[] {
+type FileScan = { readonly findings: Finding[]; readonly binary: boolean };
+
+function scanFile(root: string, relativePath: string): FileScan {
   const findings = scanText(relativePath, relativePath, {
     withLines: false,
   }).map((finding) => ({ ...finding, detail: `file name: ${finding.detail}` }));
@@ -438,27 +535,29 @@ function scanFile(root: string, relativePath: string): Finding[] {
     stats = lstatSync(absolute);
   } catch {
     // Tracked but deleted in the work tree: nothing left to read.
-    return findings;
+    return { findings, binary: false };
   }
   if (stats.isSymbolicLink()) {
-    return [...findings, ...scanText(relativePath, readlinkSync(absolute))];
+    findings.push(...scanText(relativePath, readlinkSync(absolute)));
+    return { findings, binary: false };
   }
-  if (!stats.isFile()) return findings;
+  if (!stats.isFile()) return { findings, binary: false };
 
   const bytes = readFileSync(absolute);
   const binary = bytes.includes(0);
-  // Binary files are read byte by byte so the ASCII rules still apply; the
-  // Chinese-character rule is skipped for them because random bytes decode
-  // into arbitrary characters.
+  // Binary files are read byte by byte so the ASCII key patterns still match.
+  // Only the key-material rules apply to them: random bytes spell short words
+  // such as the two-letter tool acronym, or decode into Chinese characters,
+  // far too often for the other rules to mean anything.
   const text = bytes.toString(binary ? "latin1" : "utf8");
-  findings.push(...scanText(relativePath, text, { skipHan: binary }));
+  findings.push(...scanText(relativePath, text, { keyMaterialOnly: binary }));
   if (relativePath.endsWith(".sol")) {
     findings.push(...scanSolidity(relativePath, text));
   }
-  return findings;
+  return { findings, binary };
 }
 
-type CommitRecord = {
+export type CommitRecord = {
   readonly hash: string;
   readonly authorName: string;
   readonly authorEmail: string;
@@ -467,29 +566,46 @@ type CommitRecord = {
   readonly message: string;
 };
 
-function listCommits(root: string): CommitRecord[] {
-  try {
-    git(root, ["rev-parse", "--verify", "--quiet", "HEAD"]);
-  } catch {
-    return []; // No commit yet.
+// Fields are separated, and each commit is ended, by a zero byte. Git refuses
+// zero bytes in commit messages, names and emails, so a message cannot shift
+// the fields, whatever other control characters it holds.
+const COMMIT_LOG_FORMAT = "--format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B";
+const COMMIT_FIELD_COUNT = 6;
+const COMMIT_HASH = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+/**
+ * Parses the output of `git log -z` with COMMIT_LOG_FORMAT. Throws, rather
+ * than skipping anything, when the output does not split into exactly
+ * `expectedCount` well-formed commits.
+ */
+export function parseCommitLog(
+  output: string,
+  expectedCount: number,
+): CommitRecord[] {
+  const fields = output.split("\0");
+  if (fields.pop() !== "") {
+    throw new Error("commit log does not end with a zero byte");
   }
-  const output = git(root, [
-    "log",
-    "--format=%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%B%x1e",
-    "HEAD",
-  ]);
+  if (fields.length !== expectedCount * COMMIT_FIELD_COUNT) {
+    throw new Error(
+      `commit log has ${fields.length} fields, expected ${expectedCount * COMMIT_FIELD_COUNT} for ${expectedCount} commits`,
+    );
+  }
   const commits: CommitRecord[] = [];
-  for (const record of output.split("\x1e")) {
-    const fields = record.replace(/^\n/, "").split("\x1f");
-    if (fields.length !== 6) continue;
+  for (let i = 0; i < fields.length; i += COMMIT_FIELD_COUNT) {
     const [
-      hash,
-      authorName,
-      authorEmail,
-      committerName,
-      committerEmail,
-      message,
-    ] = fields as [string, string, string, string, string, string];
+      hash = "",
+      authorName = "",
+      authorEmail = "",
+      committerName = "",
+      committerEmail = "",
+      message = "",
+    ] = fields.slice(i, i + COMMIT_FIELD_COUNT);
+    if (!COMMIT_HASH.test(hash)) {
+      throw new Error(
+        `commit log is out of step: "${hash.slice(0, 20)}" is not a commit hash`,
+      );
+    }
     commits.push({
       hash,
       authorName,
@@ -500,6 +616,22 @@ function listCommits(root: string): CommitRecord[] {
     });
   }
   return commits;
+}
+
+function listCommits(root: string): CommitRecord[] {
+  try {
+    git(root, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  } catch {
+    return []; // No commit yet.
+  }
+  const expectedCount = Number(
+    git(root, ["rev-list", "--count", "HEAD"]).trim(),
+  );
+  if (!Number.isSafeInteger(expectedCount) || expectedCount < 1) {
+    throw new Error("could not count the commits reachable from HEAD");
+  }
+  const output = git(root, ["log", "-z", COMMIT_LOG_FORMAT, "HEAD"]);
+  return parseCommitLog(output, expectedCount);
 }
 
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
@@ -550,13 +682,15 @@ export function scanRepository(directory: string): ScanResult {
   const root = git(directory, ["rev-parse", "--show-toplevel"]).trim();
   const files = listFiles(root);
   const commits = listCommits(root);
+  const fileScans = files.map((file) => scanFile(root, file));
   const findings = [
-    ...files.flatMap((file) => scanFile(root, file)),
+    ...fileScans.flatMap((scan) => scan.findings),
     ...commits.flatMap((commit) => scanCommit(commit)),
   ];
   return {
     root,
     fileCount: files.length,
+    binaryFileCount: fileScans.filter((scan) => scan.binary).length,
     commitCount: commits.length,
     findings,
   };
@@ -583,7 +717,7 @@ function main(): number {
   for (const finding of result.findings) {
     console.log(formatFinding(finding));
   }
-  const summary = `${result.fileCount} files and ${result.commitCount} commits`;
+  const summary = `${result.fileCount} files (${result.binaryFileCount} read as binary) and ${result.commitCount} commits`;
   if (result.findings.length > 0) {
     console.log(
       `Hygiene scan FAILED: ${result.findings.length} finding(s) in ${summary}.`,

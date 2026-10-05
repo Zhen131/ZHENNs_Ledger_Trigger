@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -15,7 +16,10 @@ import {
   EXPECTED_AUTHOR_EMAIL,
   EXPECTED_AUTHOR_NAME,
   formatFinding,
+  hasProviderKey,
+  parseCommitLog,
   scanRepository,
+  scanText,
 } from "../scripts/hygiene.ts";
 import type { Finding } from "../scripts/hygiene.ts";
 
@@ -632,4 +636,366 @@ describe("hygiene scan: command line", () => {
     });
     assert.equal(run.status, 2, run.stdout + run.stderr);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Rules added after the first version of the scan. Each block below only adds
+// cases; the cases above are unchanged.
+// ---------------------------------------------------------------------------
+
+/** Small seeded generator, so "random" samples are the same on every run. */
+function seededBytes(seed: number, length: number): Uint8Array {
+  const bytes = new Uint8Array(length);
+  let state = seed >>> 0;
+  for (let i = 0; i < length; i += 1) {
+    // xorshift32
+    state ^= state << 13;
+    state >>>= 0;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    state >>>= 0;
+    bytes[i] = state & 0xff;
+  }
+  return bytes;
+}
+
+const KEY_ALPHABET =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+/** Keys shaped like node-provider keys: 32 characters, "-" and "_" allowed. */
+function seededKeys(seed: number, count: number, length = 32): string[] {
+  const bytes = seededBytes(seed, count * length);
+  const keys: string[] = [];
+  for (let k = 0; k < count; k += 1) {
+    let key = "";
+    for (let i = 0; i < length; i += 1) {
+      key += KEY_ALPHABET.charAt((bytes[k * length + i] ?? 0) % 64);
+    }
+    keys.push(key);
+  }
+  return keys;
+}
+
+describe("hygiene scan: node-provider keys in URLs", () => {
+  // Each run of letters and digits here is shorter than 16, so only the
+  // provider rule can see the whole key.
+  const dashedKey = "aB3dE-fG7hJ9k_L1mN3pQ-5rS7tU9v_W1xYz";
+
+  for (const [service, text] of [
+    [
+      "Alchemy, key with - and _",
+      join("https://eth-sepolia.g.alchemy.com/v2/", dashedKey),
+    ],
+    [
+      "Alchemy over websocket, key with - and _",
+      join("wss://eth-mainnet.g.alchemy.com/v2/", dashedKey),
+    ],
+    [
+      "Alchemy NFT API",
+      join("https://eth-mainnet.g.alchemy.com/nft/v3/", dashedKey, "/getNFTs"),
+    ],
+    [
+      "Alchemy, host written without a scheme",
+      join("rpc = eth-mainnet.g.alchemy.com/v2/", dashedKey),
+    ],
+    [
+      "Infura, key with - and _",
+      join("https://sepolia.infura.io/v3/", "0a1b2c3d-4e5f_6a7b8c-9d0e1f_2a3b"),
+    ],
+    [
+      "Infura over websocket",
+      join(
+        "wss://mainnet.infura.io/ws/v3/",
+        "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d",
+      ),
+    ],
+    [
+      "QuickNode",
+      join(
+        "https://x-y.ethereum-sepolia.quiknode.pro/",
+        "a1b2-c3d4_e5f6-a7b8c9d0/",
+      ),
+    ],
+    [
+      "Ankr",
+      join("https://rpc.ankr.com/eth_sepolia/", "a1b2c3-d4e5f6_a7b8c9-d0e1f2"),
+    ],
+    [
+      "Chainstack",
+      join("https://nd-1-2-3.p2pify.com/", "a1b2c3-d4e5f6_a7b8c9-d0e1f2"),
+    ],
+    [
+      "Blast",
+      join(
+        "https://eth-sepolia.blastapi.io/",
+        "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4",
+      ),
+    ],
+    [
+      "GetBlock",
+      join("https://go.getblock.io/", "a1b2c3d4_e5f6a7b8-c9d0e1f2a3b4"),
+    ],
+  ] as const) {
+    it(`flags a provider URL with a key: ${service}`, () => {
+      assertFlagged(
+        scanOneFile("notes.md", `${text}\n`),
+        "content/provider-key-url",
+      );
+    });
+  }
+
+  it("does not echo the key it found", () => {
+    const findings = scanOneFile(
+      "notes.md",
+      join("https://eth-sepolia.g.alchemy.com/v2/", dashedKey, "\n"),
+    );
+    assertFlagged(findings, "content/provider-key-url");
+    assert.ok(!describeAll(findings).includes(dashedKey));
+  });
+
+  it("flags every one of 2000 random 32-character keys with - and _, for Alchemy and Infura", () => {
+    const missed = seededKeys(20_261_005, 2_000).filter(
+      (key) =>
+        !hasProviderKey(join("https://eth-sepolia.g.alchemy.com/v2/", key)) ||
+        !hasProviderKey(join("https://sepolia.infura.io/v3/", key)),
+    );
+    assert.deepEqual(missed, []);
+  });
+
+  it("flags a provider key in a commit message", () => {
+    const directory = createRepo();
+    commitAll(
+      directory,
+      join("Add notes\n\nrpc https://eth-sepolia.g.alchemy.com/v2/", dashedKey),
+    );
+    assertFlagged(
+      scanRepository(directory).findings,
+      "commit/message-provider-key-url",
+    );
+  });
+
+  it("does not flag npm package URLs with long names full of - and _", () => {
+    const text = [
+      "https://registry.npmjs.org/@nomicfoundation/solidity-analyzer-linux-arm64-musl/-/solidity-analyzer-linux-arm64-musl-0.1.2.tgz",
+      "https://registry.npmjs.org/@nomicfoundation/hardhat-toolbox-viem/-/hardhat-toolbox-viem-5.0.7.tgz",
+      "https://registry.npmjs.org/some_package_with_underscores_2/-/some_package_with_underscores_2-1.0.0.tgz",
+      "",
+    ].join("\n");
+    assertClean(scanOneFile("notes.md", text));
+  });
+
+  it("does not flag documentation pages on provider sites", () => {
+    const text = [
+      "https://www.alchemy.com/v2/introduction-to-node-providers",
+      "https://docs.alchemy.com/reference/eth-getbalance",
+      "https://docs.infura.io/api/networks/ethereum/json-rpc-methods",
+      "",
+    ].join("\n");
+    assertClean(scanOneFile("notes.md", text));
+  });
+
+  it("finds no URL with a key in this repository's own lock file", () => {
+    const lockFile = readFileSync(
+      path.join(import.meta.dirname, "..", "package-lock.json"),
+      "utf8",
+    );
+    const urlFindings = scanText("package-lock.json", lockFile).filter(
+      (finding) =>
+        finding.rule === "content/provider-key-url" ||
+        finding.rule === "content/keyed-url",
+    );
+    assertClean(urlFindings);
+  });
+});
+
+describe("hygiene scan: reading the commit history", () => {
+  it("does not skip a commit whose message holds the field and record separator characters", () => {
+    const directory = createRepo();
+    commitAll(directory, "First commit");
+    commitAll(
+      directory,
+      "Second commit\x1f with\x1e separators\n\nThanks to helper@example.com",
+      STRANGER,
+      OWNER,
+    );
+    commitAll(directory, "Third commit");
+
+    const result = scanRepository(directory);
+
+    assert.equal(result.commitCount, 3);
+    assertFlagged(result.findings, "commit/author");
+    assertFlagged(result.findings, "commit/foreign-email");
+  });
+
+  it("reads every field of every commit, in order", () => {
+    const directory = createRepo();
+    commitAll(directory, "One");
+    commitAll(directory, "Two\n\nBody line", STRANGER, OWNER);
+    const output = execFileSync(
+      "git",
+      [
+        "-C",
+        directory,
+        "log",
+        "-z",
+        "--format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B",
+        "HEAD",
+      ],
+      { encoding: "utf8", env: GIT_ENV },
+    );
+
+    const commits = parseCommitLog(output, 2);
+
+    assert.deepEqual(
+      commits.map((commit) => [
+        commit.authorName,
+        commit.authorEmail,
+        commit.committerName,
+        commit.message.trim(),
+      ]),
+      [
+        [STRANGER.name, STRANGER.email, OWNER.name, "Two\n\nBody line"],
+        [OWNER.name, OWNER.email, OWNER.name, "One"],
+      ],
+    );
+  });
+
+  const hash = "a".repeat(40);
+  const record = (message: string) =>
+    [hash, "N", "n@example.com", "N", "n@example.com", message, ""].join("\0");
+
+  for (const [label, output, expectedCount] of [
+    ["has fewer commits than git counted", record("one"), 2],
+    ["has more commits than git counted", record("one") + record("two"), 1],
+    ["does not end with a zero byte", record("one").slice(0, -1), 1],
+    ["has a field too many", record("one").replace("one", "o\0ne"), 1],
+    [
+      "is out of step, so a hash field holds something else",
+      ["N", hash, "n@example.com", "N", "n@example.com", "m", ""].join("\0"),
+      1,
+    ],
+  ] as const) {
+    it(`refuses, instead of skipping, a commit log that ${label}`, () => {
+      assert.throws(() => parseCommitLog(output, expectedCount));
+    });
+  }
+});
+
+describe("hygiene scan: three-digit private log codes", () => {
+  for (const [index, code] of [
+    join("100", "B_W", "21"),
+    join("120", "C-R_W", "22"),
+    join("99", "A_W", "20"),
+  ].entries()) {
+    it(`flags a private log code with two or three digits, sample ${index + 1}`, () => {
+      assertFlagged(
+        scanOneFile("notes.md", `see ${code} for details\n`),
+        "content/private-log-code",
+      );
+    });
+  }
+});
+
+describe("hygiene scan: binary files", () => {
+  const acronym = join("A", "I");
+
+  /** Random bytes with a zero byte and the two-letter acronym standing alone. */
+  function randomBinary(): Buffer {
+    const bytes = Buffer.from(seededBytes(7, 64 * 1024));
+    const word = Buffer.from(`\0 ${acronym} \0`, "latin1");
+    for (const offset of [0, 1_000, 30_000, 60_000]) {
+      word.copy(bytes, offset);
+    }
+    return bytes;
+  }
+
+  function writeBinary(directory: string, relativePath: string, bytes: Buffer) {
+    const file = path.join(directory, relativePath);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, bytes);
+  }
+
+  it("does not flag the two-letter word in a random-byte binary file", () => {
+    const bytes = randomBinary();
+    // The sample really holds the word standing alone, so the check matters.
+    assert.match(
+      bytes.toString("latin1"),
+      new RegExp(`(?<![A-Za-z0-9])${acronym}(?![A-Za-z0-9])`),
+    );
+    const directory = createRepo();
+    writeBinary(directory, "assets/picture.png", bytes);
+
+    const result = scanRepository(directory);
+
+    assertClean(result.findings);
+    assert.equal(result.binaryFileCount, 1);
+  });
+
+  it("still flags the same word in a text file", () => {
+    assertFlagged(
+      scanOneFile("notes.md", `written by ${acronym}\n`),
+      "content/tool-attribution",
+    );
+  });
+
+  it("still applies the key-material rules to a binary file", () => {
+    const secretText = [
+      `key ${"ab".repeat(32)}`,
+      join(
+        "https://eth-sepolia.g.alchemy.com/v2/",
+        "aB3dE-fG7hJ9k_L1mN3pQ-5rS7tU9v_W1xYz",
+      ),
+      join("https://api.etherscan.io/api?", "apikey=ABCDEFGH"),
+      join("mnem", "onic"),
+    ].join("\0");
+    const bytes = Buffer.concat([
+      randomBinary(),
+      Buffer.from(`\0${secretText}\0`, "latin1"),
+    ]);
+    const directory = createRepo();
+    writeBinary(directory, "assets/picture.png", bytes);
+
+    const findings = scanRepository(directory).findings;
+
+    assertFlagged(findings, "content/private-key-hex");
+    assertFlagged(findings, "content/provider-key-url");
+    assertFlagged(findings, "content/keyed-url");
+    assertFlagged(findings, "content/seed-phrase-word");
+  });
+
+  it("still checks the name of a binary file", () => {
+    const directory = createRepo();
+    writeBinary(
+      directory,
+      `assets/${String.fromCodePoint(0x56fe)}.png`,
+      randomBinary(),
+    );
+    assertFlagged(scanRepository(directory).findings, "content/han-character");
+  });
+
+  it("says how many files it read as binary", () => {
+    const directory = createRepo();
+    writeBinary(directory, "assets/picture.png", randomBinary());
+    writeSample(directory, "notes.md", "clean\n");
+    const run = spawnSync(process.execPath, [SCANNER, directory], {
+      encoding: "utf8",
+    });
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    assert.match(run.stdout, /2 files \(1 read as binary\)/);
+  });
+});
+
+describe("hygiene scan: origin() in inline assembly", () => {
+  for (const [label, code] of [
+    ["origin()", "o := origin()"],
+    ["origin ( ) with spaces", "o := origin ( )"],
+  ] as const) {
+    it(`flags ${label}, which is the same as tx.origin`, () => {
+      const body = `    function f() external view returns (address o) { assembly { ${code} } }`;
+      assertFlagged(
+        scanOneFile("contracts/Sample.sol", solidity(body)),
+        "contract/assembly-origin",
+      );
+    });
+  }
 });
