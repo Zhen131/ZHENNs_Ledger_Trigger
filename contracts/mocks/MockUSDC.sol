@@ -4,6 +4,7 @@ pragma solidity 0.8.34;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @title MockUSDC
+/// @author Zhen Zhu
 /// @notice Stand-in for USDC in local tests and local demos: a plain ERC-20 token with 6 decimals.
 /// Anyone can mint any amount to themselves. There is no supply cap and no admin.
 /// @dev Not a real asset. Never treat its balances as having value.

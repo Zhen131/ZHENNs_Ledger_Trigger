@@ -72,7 +72,8 @@ export const CONTENT_RULES: readonly PatternRule[] = [
   },
   {
     id: "content/tool-attribution",
-    description: "name of a code-generation tool or vendor, or an attribution line",
+    description:
+      "name of a code-generation tool or vendor, or an attribution line",
     pattern: new RegExp(
       [
         "Cl[a]ude",
@@ -481,8 +482,14 @@ function listCommits(root: string): CommitRecord[] {
   for (const record of output.split("\x1e")) {
     const fields = record.replace(/^\n/, "").split("\x1f");
     if (fields.length !== 6) continue;
-    const [hash, authorName, authorEmail, committerName, committerEmail, message] =
-      fields as [string, string, string, string, string, string];
+    const [
+      hash,
+      authorName,
+      authorEmail,
+      committerName,
+      committerEmail,
+      message,
+    ] = fields as [string, string, string, string, string, string];
     commits.push({
       hash,
       authorName,

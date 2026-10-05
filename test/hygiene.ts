@@ -194,7 +194,7 @@ describe("hygiene scan: contract rules", () => {
     const body = [
       "    // Never uses tx.origin, delegatecall, staticcall or selfdestruct.",
       "    /* Not Ownable, not Pausable, not Upgradeable;",
-      '       no target.call(data) and no assembly call(gas(), t, 0, 0, 0, 0, 0). */',
+      "       no target.call(data) and no assembly call(gas(), t, 0, 0, 0, 0, 0). */",
       "    uint256 public value;",
     ].join("\n");
     assertClean(scanOneFile("contracts/Sample.sol", solidity(body)));
@@ -213,9 +213,11 @@ describe("hygiene scan: contract rules", () => {
   });
 
   it("flags an import from a proxy/ path", () => {
-    const source = ["pragma solidity 0.8.34;", 'import "./proxy/Thing.sol";', ""].join(
-      "\n",
-    );
+    const source = [
+      "pragma solidity 0.8.34;",
+      'import "./proxy/Thing.sol";',
+      "",
+    ].join("\n");
     assertFlagged(
       scanOneFile("contracts/Sample.sol", source),
       "contract/admin-library-import",
@@ -272,7 +274,8 @@ describe("hygiene scan: contract rules", () => {
   });
 
   it("flags selfdestruct", () => {
-    const body = "    function f() external { selfdestruct(payable(msg.sender)); }";
+    const body =
+      "    function f() external { selfdestruct(payable(msg.sender)); }";
     assertFlagged(
       scanOneFile("contracts/Sample.sol", solidity(body)),
       "contract/selfdestruct",
@@ -475,7 +478,10 @@ describe("hygiene scan: content rules", () => {
     ["Ankr", join("https://rpc.ankr.com/eth_sepolia/", "ab12".repeat(16))],
     [
       "Chainstack",
-      join("https://nd-123-456-789.p2pify.com/", "fedcba9876543210fedcba9876543210"),
+      join(
+        "https://nd-123-456-789.p2pify.com/",
+        "fedcba9876543210fedcba9876543210",
+      ),
     ],
     [
       "Blast",
