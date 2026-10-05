@@ -108,6 +108,28 @@ async function setUp(options: Parameters<typeof deployLedgerTrigger>[0] = {}) {
     return { orderId: event.args.orderId, input, receipt, event };
   }
 
+  /** Sends cancelOrder as `from`; returns the transaction hash promise. */
+  function sendCancel(orderId: bigint, from: Wallet = owner) {
+    return trigger.write.cancelOrder([orderId], { account: from.account });
+  }
+
+  /**
+   * Cancels an order as `from`. Returns the receipt and its only
+   * OrderCancelled event.
+   */
+  async function cancel(orderId: bigint, from: Wallet = owner) {
+    const receipt = await mined(await sendCancel(orderId, from));
+    const events = parseEventLogs({
+      abi: trigger.abi,
+      logs: receipt.logs,
+      eventName: "OrderCancelled",
+    });
+    assert.equal(events.length, 1);
+    const event = events[0];
+    if (event === undefined) throw new Error("no OrderCancelled event");
+    return { receipt, event };
+  }
+
   /** The two per-owner numbers the contract keeps. */
   async function bookOf(wallet: Wallet) {
     const address = wallet.account.address;
@@ -152,6 +174,8 @@ async function setUp(options: Parameters<typeof deployLedgerTrigger>[0] = {}) {
     defaultInput,
     sendCreate,
     place,
+    sendCancel,
+    cancel,
     bookOf,
     money,
   };
@@ -529,6 +553,27 @@ describe("LedgerTrigger createOrder: open-order limit per owner (S18)", () => {
     );
   });
 
+  it("S18 accepts a new order once the owner cancels one of five", async () => {
+    const { viem, trigger, owner, defaultInput, sendCreate, place, cancel } =
+      await setUp();
+    for (let i = 0; i < 5; i += 1) await place();
+    await viem.assertions.revertWithCustomError(
+      sendCreate(await defaultInput()),
+      trigger,
+      "TooManyOpenOrders",
+    );
+
+    await cancel(3n);
+    const { orderId } = await place();
+
+    assert.equal(orderId, 6n);
+    assert.equal(await trigger.read.statusOf([orderId]), Status.Open);
+    assert.equal(
+      await trigger.read.openOrderCount([owner.account.address]),
+      5n,
+    );
+  });
+
   it("S18 lets another owner place orders while one owner is at the limit", async () => {
     const { owner, otherOwner, place, bookOf } = await setUp();
     for (let i = 0; i < 5; i += 1) await place();
@@ -567,9 +612,11 @@ describe("LedgerTrigger queries: an ID with no order (S24)", () => {
     ["the next ID not used yet", 2n],
     ["the largest uint256", MAX_UINT256],
   ] as const) {
-    it(`S24 getOrder and statusOf report OrderNotFound for ${label}`, async () => {
-      const { viem, trigger, place } = await setUp();
+    it(`S24 getOrder, statusOf and cancelOrder report OrderNotFound for ${label}`, async () => {
+      const { viem, trigger, owner, stranger, place, sendCancel, bookOf } =
+        await setUp();
       await place();
+      const book = await bookOf(owner);
 
       await viem.assertions.revertWithCustomErrorWithArgs(
         trigger.read.getOrder([orderId]),
@@ -583,6 +630,18 @@ describe("LedgerTrigger queries: an ID with no order (S24)", () => {
         "OrderNotFound",
         [orderId],
       );
+      // Checked before the caller: the owner of order 1 and a stranger get
+      // the same error.
+      for (const caller of [owner, stranger]) {
+        await viem.assertions.revertWithCustomErrorWithArgs(
+          sendCancel(orderId, caller),
+          trigger,
+          "OrderNotFound",
+          [orderId],
+        );
+      }
+      assert.deepEqual(await bookOf(owner), book);
+      assert.equal(await trigger.read.statusOf([1n]), Status.Open);
     });
   }
 
@@ -590,5 +649,349 @@ describe("LedgerTrigger queries: an ID with no order (S24)", () => {
     const { stranger, bookOf } = await setUp();
 
     assert.deepEqual(await bookOf(stranger), { count: 0n, total: 0n });
+  });
+});
+
+describe("LedgerTrigger cancelOrder: the owner cancels (S03)", () => {
+  it("S03 owner cancels an open order: Open -> Cancelled", async () => {
+    const { trigger, owner, place, cancel, bookOf } = await setUp();
+    const { orderId, input } = await place({ usdcAmount: 60n * ONE_USDC });
+    await place({ usdcAmount: 40n * ONE_USDC });
+    assert.equal(await trigger.read.statusOf([orderId]), Status.Open);
+
+    await cancel(orderId);
+
+    assert.equal(await trigger.read.statusOf([orderId]), Status.Cancelled);
+    const order = await trigger.read.getOrder([orderId]);
+    assert.equal(order.status, Status.Cancelled);
+    assert.equal(order.owner, getAddress(owner.account.address));
+    assert.equal(order.executor, getAddress(input.executor));
+    assert.equal(order.recipient, getAddress(input.recipient));
+    assert.equal(order.usdcAmount, 60n * ONE_USDC);
+    assert.equal(order.targetPrice, input.targetPrice);
+    assert.equal(order.expiry, input.expiry);
+    assert.deepEqual(await bookOf(owner), { count: 1n, total: 40n * ONE_USDC });
+  });
+
+  it("S03 emits OrderCancelled with the order, its owner and not-after-expiry, and nothing else", async () => {
+    const { trigger, owner, place, cancel } = await setUp();
+    const { orderId } = await place();
+
+    const { receipt, event } = await cancel(orderId);
+
+    assert.deepEqual(event.args, {
+      orderId,
+      owner: getAddress(owner.account.address),
+      afterExpiry: false,
+    });
+    assert.equal(receipt.logs.length, 1);
+    assert.equal(
+      getAddress(receipt.logs[0]?.address ?? zeroAddress),
+      getAddress(trigger.address),
+    );
+  });
+
+  it("S03 cancelling moves no money", async () => {
+    const { place, cancel, money } = await setUp();
+    const { orderId } = await place();
+    const before = await money();
+
+    await cancel(orderId);
+
+    assert.deepEqual(await money(), before);
+  });
+
+  for (const [label, badPrice] of [
+    ["zero", 0n],
+    ["a negative price", -1n],
+  ] as const) {
+    it(`S03 owner cancels while the price feed reports ${label} and its last update is long past`, async () => {
+      const { trigger, feed, mined, place, cancel, bookOf, owner } =
+        await setUp();
+      const { orderId } = await place();
+      await mined(await feed.write.setAnswer([badPrice]));
+      await mined(await feed.write.setUpdatedAt([1n]));
+
+      await cancel(orderId);
+
+      assert.equal(await trigger.read.statusOf([orderId]), Status.Cancelled);
+      assert.deepEqual(await bookOf(owner), { count: 0n, total: 0n });
+    });
+  }
+});
+
+describe("LedgerTrigger cancelOrder: only the owner (S05)", () => {
+  for (const [label, role] of [
+    ["a stranger", "stranger"],
+    ["the order's executor", "executor"],
+    ["the order's recipient", "recipient"],
+    ["another owner with orders of their own", "otherOwner"],
+  ] as const) {
+    it(`S05 ${label} cannot cancel the order`, async () => {
+      const fixture = await setUp();
+      const {
+        viem,
+        trigger,
+        owner,
+        otherOwner,
+        place,
+        sendCancel,
+        bookOf,
+        money,
+      } = fixture;
+      const caller = fixture[role];
+      await place();
+      await place({}, otherOwner);
+      const before = await money();
+      const ownerBook = await bookOf(owner);
+      const otherBook = await bookOf(otherOwner);
+
+      await viem.assertions.revertWithCustomErrorWithArgs(
+        sendCancel(1n, caller),
+        trigger,
+        "NotOrderOwner",
+        [1n, getAddress(caller.account.address)],
+      );
+
+      assert.equal(await trigger.read.statusOf([1n]), Status.Open);
+      assert.equal((await trigger.read.getOrder([1n])).status, Status.Open);
+      assert.deepEqual(await bookOf(owner), ownerBook);
+      assert.deepEqual(await bookOf(otherOwner), otherBook);
+      assert.deepEqual(await money(), before);
+    });
+  }
+
+  it("S05 the executor cannot cancel an expired order either", async () => {
+    const { viem, networkHelpers, trigger, executor, place, sendCancel } =
+      await setUp();
+    const { input } = await place();
+    await networkHelpers.time.increaseTo(input.expiry + 1n);
+
+    await viem.assertions.revertWithCustomErrorWithArgs(
+      sendCancel(1n, executor),
+      trigger,
+      "NotOrderOwner",
+      [1n, getAddress(executor.account.address)],
+    );
+
+    assert.equal(await trigger.read.statusOf([1n]), Status.Expired);
+  });
+});
+
+describe("LedgerTrigger cancelOrder: a cancelled order is final", () => {
+  it("rejects cancelling the same order twice, and counts it off only once", async () => {
+    const { viem, trigger, owner, place, cancel, sendCancel, bookOf } =
+      await setUp();
+    const { orderId } = await place({ usdcAmount: 30n * ONE_USDC });
+    await place({ usdcAmount: 20n * ONE_USDC });
+    await cancel(orderId);
+    const afterFirst = await bookOf(owner);
+    assert.deepEqual(afterFirst, { count: 1n, total: 20n * ONE_USDC });
+
+    await viem.assertions.revertWithCustomErrorWithArgs(
+      sendCancel(orderId),
+      trigger,
+      "OrderNotOpen",
+      [orderId, Status.Cancelled],
+    );
+
+    assert.deepEqual(await bookOf(owner), afterFirst);
+    assert.equal(await trigger.read.statusOf([orderId]), Status.Cancelled);
+  });
+
+  it("reports a cancelled order as Cancelled, not Expired, after its expiry", async () => {
+    const { networkHelpers, trigger, place, cancel } = await setUp();
+    const { orderId, input } = await place();
+    await cancel(orderId);
+
+    await networkHelpers.time.increaseTo(input.expiry + ONE_DAY);
+
+    assert.equal(await trigger.read.statusOf([orderId]), Status.Cancelled);
+    assert.equal(
+      (await trigger.read.getOrder([orderId])).status,
+      Status.Cancelled,
+    );
+  });
+});
+
+describe("LedgerTrigger statusOf: expiry is worked out, not stored", () => {
+  it("reports Open at the expiry second and Expired one second later, while getOrder keeps Open", async () => {
+    const { networkHelpers, trigger, place, now } = await setUp();
+    const { orderId, input } = await place();
+
+    await networkHelpers.time.increaseTo(input.expiry);
+    assert.equal(await now(), input.expiry);
+    assert.equal(await trigger.read.statusOf([orderId]), Status.Open);
+    assert.equal((await trigger.read.getOrder([orderId])).status, Status.Open);
+
+    await networkHelpers.time.increaseTo(input.expiry + 1n);
+    assert.equal(await now(), input.expiry + 1n);
+    assert.equal(await trigger.read.statusOf([orderId]), Status.Expired);
+    assert.equal((await trigger.read.getOrder([orderId])).status, Status.Open);
+  });
+
+  it("keeps an expired order in the owner's open count and total", async () => {
+    const { networkHelpers, owner, place, bookOf } = await setUp();
+    const { input } = await place({ usdcAmount: 70n * ONE_USDC });
+
+    await networkHelpers.time.increaseTo(input.expiry + ONE_DAY);
+
+    assert.deepEqual(await bookOf(owner), { count: 1n, total: 70n * ONE_USDC });
+  });
+
+  it("records not-after-expiry for a cancel at the expiry second and after-expiry one second later", async () => {
+    const { networkHelpers, place, cancel } = await setUp();
+    const { input } = await place();
+    const expiry = input.expiry;
+    await place({ expiry });
+
+    await networkHelpers.time.setNextBlockTimestamp(expiry);
+    const atExpiry = await cancel(1n);
+    await networkHelpers.time.setNextBlockTimestamp(expiry + 1n);
+    const afterExpiry = await cancel(2n);
+
+    assert.equal(atExpiry.event.args.afterExpiry, false);
+    assert.equal(afterExpiry.event.args.afterExpiry, true);
+  });
+});
+
+describe("LedgerTrigger cancelOrder: an expired order (S12)", () => {
+  it("S12 an expired order keeps its slot until the owner cancels it: Expired -> Cancelled frees one", async () => {
+    const {
+      viem,
+      networkHelpers,
+      trigger,
+      owner,
+      now,
+      defaultInput,
+      sendCreate,
+      place,
+      cancel,
+      bookOf,
+    } = await setUp();
+    const expiry = (await now()) + ONE_HOUR;
+    for (let i = 0; i < 5; i += 1) await place({ expiry });
+    await networkHelpers.time.increaseTo(expiry + 1n);
+    for (let id = 1n; id <= 5n; id += 1n) {
+      assert.equal(await trigger.read.statusOf([id]), Status.Expired);
+    }
+    assert.deepEqual(await bookOf(owner), {
+      count: 5n,
+      total: 500n * ONE_USDC,
+    });
+
+    await viem.assertions.revertWithCustomErrorWithArgs(
+      sendCreate(await defaultInput()),
+      trigger,
+      "TooManyOpenOrders",
+      [getAddress(owner.account.address), 5n],
+    );
+
+    const { event } = await cancel(4n);
+    assert.deepEqual(event.args, {
+      orderId: 4n,
+      owner: getAddress(owner.account.address),
+      afterExpiry: true,
+    });
+    assert.equal(await trigger.read.statusOf([4n]), Status.Cancelled);
+    assert.equal((await trigger.read.getOrder([4n])).status, Status.Cancelled);
+    assert.deepEqual(await bookOf(owner), {
+      count: 4n,
+      total: 400n * ONE_USDC,
+    });
+
+    const { orderId } = await place();
+    assert.equal(orderId, 6n);
+    assert.equal(await trigger.read.statusOf([orderId]), Status.Open);
+    assert.deepEqual(await bookOf(owner), {
+      count: 5n,
+      total: 500n * ONE_USDC,
+    });
+  });
+});
+
+describe("LedgerTrigger bookkeeping: open count and total always match the orders", () => {
+  it("keeps every owner's open count and total equal to the sum over their Open orders, through mixed steps", async () => {
+    const fixture = await setUp();
+    const {
+      networkHelpers,
+      trigger,
+      owner,
+      otherOwner,
+      stranger,
+      now,
+      place,
+      cancel,
+      bookOf,
+    } = fixture;
+    const owners = [owner, otherOwner, stranger];
+    let lastId = 0n;
+
+    async function assertBooksMatchOrders(step: string) {
+      const expected = new Map<string, { count: bigint; total: bigint }>();
+      for (const wallet of owners) {
+        expected.set(getAddress(wallet.account.address), {
+          count: 0n,
+          total: 0n,
+        });
+      }
+      for (let id = 1n; id <= lastId; id += 1n) {
+        const order = await trigger.read.getOrder([id]);
+        const sums = expected.get(getAddress(order.owner));
+        assert.ok(sums !== undefined, `order ${id} has an unknown owner`);
+        if (order.status === Status.Open) {
+          sums.count += 1n;
+          sums.total += order.usdcAmount;
+        }
+      }
+      for (const wallet of owners) {
+        assert.deepEqual(
+          await bookOf(wallet),
+          expected.get(getAddress(wallet.account.address)),
+          `after ${step}, for ${wallet.account.address}`,
+        );
+      }
+    }
+
+    async function placeAs(
+      wallet: (typeof owners)[number],
+      usdcAmount: bigint,
+      expiry: bigint,
+    ) {
+      const { orderId } = await place({ usdcAmount, expiry }, wallet);
+      lastId = orderId;
+    }
+
+    const soon = (await now()) + ONE_HOUR;
+    const later = (await now()) + ONE_DAY;
+    await placeAs(owner, 100n * ONE_USDC, later); // 1
+    await placeAs(otherOwner, 250_000_001n, soon); // 2
+    await placeAs(owner, 500n * ONE_USDC, soon); // 3
+    await placeAs(stranger, 1n, later); // 4
+    await placeAs(otherOwner, 42n * ONE_USDC, later); // 5
+    await assertBooksMatchOrders("five orders from three owners");
+
+    await cancel(1n, owner);
+    await assertBooksMatchOrders("owner cancels order 1");
+
+    await networkHelpers.time.increaseTo(soon + 1n);
+    await assertBooksMatchOrders("orders 2 and 3 expire");
+
+    await cancel(2n, otherOwner);
+    await assertBooksMatchOrders("otherOwner cancels expired order 2");
+
+    await placeAs(owner, 7n * ONE_USDC, later); // 6
+    await placeAs(stranger, 3n * ONE_USDC, later); // 7
+    await cancel(4n, stranger);
+    await assertBooksMatchOrders("two more orders and a stranger's cancel");
+
+    await cancel(3n, owner);
+    await cancel(6n, owner);
+    await cancel(5n, otherOwner);
+    await cancel(7n, stranger);
+    await assertBooksMatchOrders("every order cancelled");
+    for (const wallet of owners) {
+      assert.deepEqual(await bookOf(wallet), { count: 0n, total: 0n });
+    }
   });
 });

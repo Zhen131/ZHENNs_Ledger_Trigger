@@ -291,6 +291,27 @@ contract LedgerTrigger {
         );
     }
 
+    /// @notice Cancels an open order, expired or not, which frees one of the owner's open-order
+    /// slots. Moves no tokens and no ETH, and calls no other contract: it works whatever the price
+    /// feed or the swap venue does.
+    /// @dev Only the order's owner can call it; the executor cannot. Rejects, in this order: an ID
+    /// that no order has (`OrderNotFound`); a caller other than the owner (`NotOrderOwner`); an
+    /// order whose stored status is not `Open`, that is one already filled or cancelled
+    /// (`OrderNotOpen`). Sets the status to `Cancelled`, takes the order off the owner's open
+    /// count and total, and emits `OrderCancelled`.
+    /// @param orderId The order (uint256).
+    function cancelOrder(
+        uint256 orderId
+    ) external orderExists(orderId) onlyOrderOwner(orderId) onlyOpen(orderId) {
+        Order storage order = orders[orderId];
+        order.status = OrderStatus.Cancelled;
+        OpenOrders storage open = openOrdersOf[order.owner];
+        --open.count;
+        open.total -= order.usdcAmount;
+
+        emit OrderCancelled(orderId, order.owner, _isExpired(order));
+    }
+
     /// @notice Returns every field of an order, with its status as stored. An expired order still
     /// shows `Open` here; `statusOf` gives the status worked out from the expiry.
     /// @dev Anyone can call it. Rejects an ID that no order has (`OrderNotFound`), ID 0 included.
