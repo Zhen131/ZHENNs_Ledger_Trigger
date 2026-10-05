@@ -4,15 +4,16 @@ Ledger Trigger is a course project that aims to provide on-chain limit orders: a
 
 ## Status
 
-Early skeleton. What exists today:
+Work in progress. What exists today:
 
 - a Hardhat 3 project with TypeScript tests (Node test runner and viem);
 - `MockUSDC`, a 6-decimal test token that anyone can mint to themselves, with its tests;
-- two interfaces the order contract will use: `IPriceFeed` (the two Chainlink price feed functions it reads) and `ISwapVenue` (swap USDC for ETH);
+- two interfaces the order contract uses: `IPriceFeed` (the two Chainlink price feed functions it reads) and `ISwapVenue` (swap USDC for ETH);
 - `MockPriceFeed`, a price feed whose price and update time anyone can set, and `MockSwapVenue`, which swaps USDC for ETH at the feed price minus a fee fixed at deployment, both with their tests;
+- `LedgerTrigger`, the order contract, with its tests. Anyone can place an order (`createOrder`), only its owner can cancel it (`cancelOrder`), and anyone can read an order, its status and each owner's open orders. Placing and cancelling move no tokens and no ETH. An order whose expiry has passed is reported as `Expired` but keeps its owner's open-order slot until cancelled. Its seven deployment parameters can never change;
 - one command that runs every repository check (below).
 
-The order contract, the keeper and the demo are not written yet.
+Filling an order, the keeper and the demo are not written yet.
 
 ## Requirements
 

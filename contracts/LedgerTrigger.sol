@@ -240,10 +240,11 @@ contract LedgerTrigger {
     /// (`TooManyOpenOrders`). The executor may be the caller. Emits `OrderCreated`.
     /// @param usdcAmount USDC to spend, in the token's smallest unit (uint256).
     /// @param targetPrice ETH price in USD with the price feed's decimals (uint256).
-    /// @param recipient Address that receives the ETH.
-    /// @param executor Address the owner names for filling the order; may be the owner.
+    /// @param recipient Address that receives the ETH (address).
+    /// @param executor Address the owner names for filling the order; may be the owner (address).
     /// @param expiry Last second, in Unix time, at which the order is valid (uint256).
-    /// @return orderId ID of the new order: 1 for the first order, then one more each time.
+    /// @return orderId ID of the new order: 1 for the first order, then one more each time
+    /// (uint256).
     function createOrder(
         uint256 usdcAmount,
         uint256 targetPrice,
@@ -316,7 +317,7 @@ contract LedgerTrigger {
     /// shows `Open` here; `statusOf` gives the status worked out from the expiry.
     /// @dev Anyone can call it. Rejects an ID that no order has (`OrderNotFound`), ID 0 included.
     /// @param orderId The order (uint256).
-    /// @return order The stored order.
+    /// @return order The stored order (an `Order` struct).
     function getOrder(
         uint256 orderId
     ) external view orderExists(orderId) returns (Order memory order) {
@@ -329,7 +330,8 @@ contract LedgerTrigger {
     /// @dev Anyone can call it. Rejects an ID that no order has (`OrderNotFound`), ID 0 included;
     /// it never returns `None`.
     /// @param orderId The order (uint256).
-    /// @return status `Open`, `Filled`, `Cancelled` or `Expired`.
+    /// @return status `Open`, `Filled`, `Cancelled` or `Expired` (an `OrderStatus`, uint8 in the
+    /// ABI).
     function statusOf(
         uint256 orderId
     ) external view orderExists(orderId) returns (OrderStatus status) {
@@ -342,7 +344,7 @@ contract LedgerTrigger {
 
     /// @notice Number of orders of `owner` whose stored status is `Open`, expired ones included.
     /// @dev Anyone can call it; it never reverts. Zero for an address with no orders.
-    /// @param owner Any address.
+    /// @param owner Any address (address).
     /// @return The number of open orders (uint256).
     function openOrderCount(address owner) external view returns (uint256) {
         return openOrdersOf[owner].count;
@@ -351,7 +353,7 @@ contract LedgerTrigger {
     /// @notice USDC amounts of the orders of `owner` whose stored status is `Open`, expired ones
     /// included, added up. This is the allowance `owner` needs to give this contract to cover them.
     /// @dev Anyone can call it; it never reverts. Zero for an address with no orders.
-    /// @param owner Any address.
+    /// @param owner Any address (address).
     /// @return The total, in the token's smallest unit (uint256).
     function openOrderTotal(address owner) external view returns (uint256) {
         return openOrdersOf[owner].total;
