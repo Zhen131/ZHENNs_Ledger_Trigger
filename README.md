@@ -183,8 +183,8 @@ Every script that sends transactions (both deploys, `place-order`, `cancel-order
 I am sending real transactions to a public network
 ```
 
-Even then, only the two deploys, `place-order`, `cancel-order` and `fund-venue` go ahead. The demo and `set-price` never run on another chain. The keeper does not pass through this gate: it is a separate program that runs on whichever node its own settings name.
+Even then, only `deploy:external`, `place-order`, `cancel-order` and `fund-venue` go ahead. The demo, `deploy:mocks` and `set-price` never run on another chain. The keeper does not pass through this gate: it is a separate program that runs on whichever node its own settings name.
 
 ## Sepolia test network
 
-The configuration has a `sepolia` network. Its node URL and private key are Hardhat configuration variables, `TRIGGER_SEPOLIA_RPC_URL` and `TRIGGER_SEPOLIA_PRIVATE_KEY`, read from environment variables of those names or from Hardhat's encrypted keystore; no value is written in the repository. With its chain ID set to 11155111, Hardhat refuses a node that serves another chain. Follow `docs/testnet-guide.md` to deploy and run the demo on Sepolia: which wallets you need, where the keys go and where they never go, each command, and what you should see.
+The configuration has a `sepolia` network. Its node URL and private key are Hardhat configuration variables, `TRIGGER_SEPOLIA_RPC_URL` and `TRIGGER_SEPOLIA_PRIVATE_KEY`, read from environment variables of those names or from Hardhat's encrypted keystore; no value is written in the repository. With its chain ID set to 11155111, Hardhat refuses a node that serves another chain. Follow `docs/testnet-guide.md` to deploy on Sepolia with `deploy:external`, place an order and let the keeper fill it: which wallets you need, where the keys go and where they never go, each command, and what you should see. `npm run demo` is not part of it: the demo runs on Hardhat's local chain only.
