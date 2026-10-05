@@ -118,6 +118,11 @@ export function readConfig(env: Environment): ConfigResult {
   const rpcUrl = value(ENV.rpcUrl);
   if (rpcUrl !== undefined && !isHttpUrl(rpcUrl)) {
     invalid(ENV.rpcUrl, "must be an http:// or https:// URL");
+  } else if (rpcUrl !== undefined && hasUserInfo(rpcUrl)) {
+    invalid(
+      ENV.rpcUrl,
+      "is written in a form the keeper does not accept: a user name or password before the host (user:password@host). Use the URL exactly as the node service gives it, with any access key in the path",
+    );
   }
 
   const account = readAccount(value(ENV.privateKey), invalid);
@@ -176,6 +181,15 @@ export function readConfig(env: Environment): ConfigResult {
     },
     intervalSeconds,
   };
+}
+
+/**
+ * True when the URL has a user name or password before the host. Node's
+ * fetch refuses such URLs, so the keeper could never reach the node.
+ */
+function hasUserInfo(text: string): boolean {
+  const url = new URL(text);
+  return url.username !== "" || url.password !== "";
 }
 
 function isHttpUrl(text: string): boolean {

@@ -21,6 +21,12 @@
 // The private key and the node URL are never printed: every line comes from
 // `formatLogLine`, and errors are logged as this project's own sentence and
 // category, never as a library's message.
+//
+// The keeper talks to the configured node only. Every viem client here is
+// built with CCIP-read turned off (`ccipRead: false`): otherwise a contract
+// could revert with an OffchainLookup error that names a web address, and
+// viem would fetch it. With it off, such a revert is sorted like any other
+// contract error.
 
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -103,7 +109,10 @@ async function connect(
   const transport = http(config.rpcUrl);
   let chainId: number;
   try {
-    chainId = await createPublicClient({ transport }).getChainId();
+    chainId = await createPublicClient({
+      transport,
+      ccipRead: false,
+    }).getChainId();
   } catch (error) {
     return failed(error);
   }
@@ -113,7 +122,11 @@ async function connect(
     nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
     rpcUrls: { default: { http: [] } },
   });
-  const publicClient = createPublicClient({ chain, transport });
+  const publicClient = createPublicClient({
+    chain,
+    transport,
+    ccipRead: false,
+  });
   let code;
   try {
     code = await publicClient.getCode({ address: config.contractAddress });
@@ -133,6 +146,7 @@ async function connect(
     chain,
     transport,
     account: config.account,
+    ccipRead: false,
   });
   return {
     kind: "connected",
