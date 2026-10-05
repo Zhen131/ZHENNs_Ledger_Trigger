@@ -55,9 +55,12 @@ export async function fundVenue(input: {
   readonly settings: FundVenueSettings;
 }): Promise<FundedVenue> {
   const { viem, settings } = input;
-  const { publicClient, trigger } = await triggerAt(viem, settings.contract);
+  const { publicClient, walletClients, trigger } = await triggerAt(
+    viem,
+    settings.contract,
+  );
   await passSendGate(publicClient, GatedScript.FundVenue, input.confirmation);
-  const [sender] = await viem.getWalletClients();
+  const [sender] = walletClients;
   if (sender === undefined) {
     throw new ScriptError("The network has no account to send ETH from.");
   }

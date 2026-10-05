@@ -62,7 +62,7 @@ export async function orderStatus(input: {
   readonly settings: OrderStatusSettings;
 }): Promise<OrderReport> {
   const { viem, settings } = input;
-  const { trigger, usdcDecimals, priceDecimals } = await triggerAt(
+  const { client, trigger, usdcDecimals, priceDecimals } = await triggerAt(
     viem,
     settings.contract,
   );
@@ -72,6 +72,7 @@ export async function orderStatus(input: {
   const feed = await viem.getContractAt(
     "IPriceFeed",
     await trigger.read.priceFeed(),
+    { client },
   );
   const [, latestPrice] = await feed.read.latestRoundData();
   return {

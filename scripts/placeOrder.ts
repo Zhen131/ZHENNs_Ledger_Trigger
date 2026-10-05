@@ -83,10 +83,10 @@ export async function placeOrder(input: {
   readonly settings: PlaceOrderSettings;
 }): Promise<PlacedOrder> {
   const { viem, settings } = input;
-  const { publicClient, trigger, usdcDecimals, priceDecimals } =
+  const { publicClient, walletClients, trigger, usdcDecimals, priceDecimals } =
     await triggerAt(viem, settings.contract);
   await passSendGate(publicClient, GatedScript.PlaceOrder, input.confirmation);
-  const [owner] = await viem.getWalletClients();
+  const [owner] = walletClients;
   if (owner === undefined) {
     throw new ScriptError(
       "The network has no account to place the order from.",

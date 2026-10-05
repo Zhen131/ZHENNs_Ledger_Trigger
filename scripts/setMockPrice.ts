@@ -48,11 +48,15 @@ export async function setMockPrice(input: {
   readonly settings: SetPriceSettings;
 }): Promise<PriceSet> {
   const { viem, settings } = input;
-  const { publicClient, trigger } = await triggerAt(viem, settings.contract);
+  const { publicClient, client, trigger } = await triggerAt(
+    viem,
+    settings.contract,
+  );
   await passSendGate(publicClient, GatedScript.SetPrice, input.confirmation);
   const feed = await viem.getContractAt(
     "MockPriceFeed",
     await trigger.read.priceFeed(),
+    { client },
   );
   const decimals = await feed.read.decimals();
   const sent = parseDecimal(settings.priceUsd, decimals, VARIABLES.priceUsd);

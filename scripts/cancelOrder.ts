@@ -50,9 +50,12 @@ export async function cancelOrder(input: {
   readonly settings: CancelOrderSettings;
 }): Promise<CancelledOrder> {
   const { viem, settings } = input;
-  const { publicClient, trigger } = await triggerAt(viem, settings.contract);
+  const { publicClient, walletClients, trigger } = await triggerAt(
+    viem,
+    settings.contract,
+  );
   await passSendGate(publicClient, GatedScript.CancelOrder, input.confirmation);
-  const [owner] = await viem.getWalletClients();
+  const [owner] = walletClients;
   if (owner === undefined) {
     throw new ScriptError("The network has no account to cancel from.");
   }

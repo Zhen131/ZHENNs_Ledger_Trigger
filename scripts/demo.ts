@@ -25,6 +25,7 @@ import { Action, formatLogLine, type LogEntry } from "../keeper/log.ts";
 import { orderStatusName } from "../keeper/names.ts";
 import { runOnce } from "../keeper/runOnce.ts";
 import { formatDecimal, parseDecimal } from "./amounts.ts";
+import { scriptClients } from "./clients.ts";
 import {
   DEPLOY_DEFAULTS,
   MOCK_FEED_DECIMALS,
@@ -164,13 +165,13 @@ export async function runDemo(input: {
   readonly confirmation: string | undefined;
 }): Promise<DemoResult> {
   const { viem } = input;
-  const publicClient = await viem.getPublicClient();
+  const { publicClient, walletClients, client } = await scriptClients(viem);
   const chainId = await passSendGate(
     publicClient,
     GatedScript.Demo,
     input.confirmation,
   );
-  const [owner, keeper, recipient, stranger] = await viem.getWalletClients();
+  const [owner, keeper, recipient, stranger] = walletClients;
   if (
     owner === undefined ||
     keeper === undefined ||
@@ -197,9 +198,15 @@ export async function runDemo(input: {
     },
   });
   const params = deployment.parameters;
-  const trigger = await viem.getContractAt("LedgerTrigger", deployment.trigger);
-  const usdc = await viem.getContractAt("MockUSDC", params.usdc);
-  const feed = await viem.getContractAt("MockPriceFeed", params.priceFeed);
+  const trigger = await viem.getContractAt(
+    "LedgerTrigger",
+    deployment.trigger,
+    { client },
+  );
+  const usdc = await viem.getContractAt("MockUSDC", params.usdc, { client });
+  const feed = await viem.getContractAt("MockPriceFeed", params.priceFeed, {
+    client,
+  });
   const usdcDecimals = await trigger.read.usdcDecimals();
   const priceDecimals = await trigger.read.priceDecimals();
   const toUsdc = (text: string) => parseDecimal(text, usdcDecimals, "amount");
