@@ -10,7 +10,7 @@ import {LedgerTrigger} from "../LedgerTrigger.sol";
 /// @dev For tests only; never deploy it anywhere else. A test names it as both the executor and
 /// the recipient of an order, so the second call gets past the caller check and only the
 /// contract's own defences can stop it. It catches the failure of the second call so that
-/// receiving the ETH still succeeds: if it reverted instead, the first fill would fail as well
+/// receiving the ETH succeeds: if it reverted instead, the first fill would fail as well
 /// and the test could not show that a second fill never happens. Anyone can set the target order.
 contract ReentrantRecipient {
     /// @notice The LedgerTrigger it calls back into.

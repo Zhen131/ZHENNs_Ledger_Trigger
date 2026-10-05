@@ -276,7 +276,7 @@ describe("LedgerTrigger fillOrder: the price has not come down (S06)", () => {
   });
 });
 
-describe("LedgerTrigger fillOrder: an order that is no longer open (S07, S08, S09)", () => {
+describe("LedgerTrigger fillOrder: an order that is not open (S07, S08, S09)", () => {
   it("S07 a second fill of the same order is rejected with OrderNotOpen, and the recipient is paid once", async () => {
     const {
       viem,

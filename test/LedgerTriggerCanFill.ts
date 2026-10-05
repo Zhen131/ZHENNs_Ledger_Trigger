@@ -312,7 +312,7 @@ describe("LedgerTrigger canFill: what it does and does not look at", () => {
     );
   });
 
-  it("does not try the swap: with no ETH at the swap venue it still reports None, and the fill then fails at the venue", async () => {
+  it("does not try the swap: it reports None even with no ETH at the swap venue, and the fill then fails at the venue", async () => {
     const f = await setUpFills({ venueEth: 0n });
     const { orderId } = await f.place();
 

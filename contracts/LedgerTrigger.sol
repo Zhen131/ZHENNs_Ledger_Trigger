@@ -431,7 +431,7 @@ contract LedgerTrigger is ReentrancyGuard {
     /// zero or below or updated after the current block's time (`InvalidPrice`), price older than
     /// `maxPriceAge` (`StalePrice`), price above the target price (`PriceAboveTarget`), owner's
     /// allowance below the order amount (`InsufficientAllowance`), owner's balance below the order
-    /// amount (`InsufficientBalance`). A price exactly `maxPriceAge` old still counts, and a price
+    /// amount (`InsufficientBalance`). A price exactly `maxPriceAge` old counts as fresh, and a price
     /// equal to the target price can fill. Then it marks the order `Filled`, takes it off the
     /// owner's open count and total, takes the order amount from the owner, approves the swap
     /// venue for that amount and swaps it with a minimum ETH output. It trusts its own balances,
@@ -550,8 +550,8 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @dev Anyone can call it. It does not look at the caller, so it says nothing about who may
     /// fill the order. Rejects an ID that no order has (`OrderNotFound`), ID 0 included. It runs
     /// the very checks that `fillOrder` runs after checking the caller, in the same order: stored
-    /// status, expiry, price, allowance, balance. It does not try the swap, so a fill it calls
-    /// possible can still fail at the swap venue or when sending the ETH.
+    /// status, expiry, price, allowance, balance. It does not try the swap, so a fill it reports as
+    /// possible can fail at the swap venue or when sending the ETH.
     /// @param orderId The order (uint256).
     /// @return fillable True exactly when `reason` is `None` (bool).
     /// @return reason The first reason found, or `None` (a `FillBlocker`, uint8 in the ABI).
