@@ -11,21 +11,35 @@
 //
 // The rule, for each request:
 //
+// - OPEN_GATE_METHOD, sent by the send gate's `openSendGate`, is answered here
+//   and never reaches a node (see `openConnection`).
 // - A connection to Hardhat's in-process simulated chain passes. That chain
 //   lives in this process only; nothing sent to it leaves the machine.
 // - A request that only reads (READ_ONLY_METHODS) passes.
 // - Anything else (sending a transaction or a deployment, signing, the
 //   hardhat_ and evm_ methods that change a node's state, any method not in
-//   the list) passes only when the connection's chain is Hardhat's local
-//   chain (`isLocalChain`, the send gate's own rule), or when, in this
-//   process, the send gate has already let a deployment or operation script
-//   send on that chain (`gateConfirmedChain`). Otherwise it is refused with
-//   an error that says why, and nothing is sent.
+//   the list) is decided by `mayWrite`: it passes only when the connection's
+//   chain is Hardhat's local chain (`isLocalChain`, the send gate's own rule),
+//   or when the send gate has opened this very connection for the chain its
+//   node serves now. Otherwise it is refused with an error that says why,
+//   and nothing is sent.
 //
-// The chain ID comes from the connection's configuration when it sets one
-// (`sepolia` does); otherwise the node is asked once per connection with
-// `eth_chainId`, which reads only. The keeper does not use Hardhat's network
-// connections, so this guard does not touch it.
+// The guard keeps the opened connections itself, by connection object, in a
+// WeakMap no other module can reach. A connection is opened only here, only
+// for a single-use token the send gate issued after deciding, and only when
+// the connection's own node then reports the chain the gate decided on.
+// Opening one connection opens no other, not even one to the same chain.
+//
+// Chain IDs: when a connection's configuration sets a chain that is not local
+// (`sepolia` does), a request on a connection the gate has not opened is
+// refused on that alone, without contacting the node. In every other case the
+// node is asked with `eth_chainId` (it only reads) before each request that is
+// not a read, so a node swapped behind a connection is noticed, and a
+// configuration that claims the local chain is not taken on trust. Hardhat's
+// own chain ID check on networks that set one stays in place behind this.
+//
+// The keeper does not use Hardhat's network connections, so this guard does
+// not touch it.
 
 import { HardhatPluginError } from "hardhat/plugins";
 import type { HookContext, NetworkHooks } from "hardhat/types/hooks";
@@ -34,8 +48,9 @@ import type { JsonRpcRequest, JsonRpcResponse } from "hardhat/types/providers";
 
 import {
   LOCAL_CHAIN_ID,
-  gateConfirmedChain,
+  OPEN_GATE_METHOD,
   isLocalChain,
+  redeemSendGateToken,
 } from "./sendGate.ts";
 
 /** Shown as the source of the error when the guard refuses a request. */
@@ -81,7 +96,7 @@ export function refusalReason(
   networkName: string,
   chainId: number,
 ): string {
-  return `Refused ${method} on network "${networkName}", chain ${chainId}: transactions go to Hardhat's local chain (chain ID ${LOCAL_CHAIN_ID}) only, unless a deployment or operation script has passed its send gate for that chain. Nothing was sent. To run the tests, select no network: no --network and no HARDHAT_NETWORK environment variable.`;
+  return `Refused ${method} on network "${networkName}", chain ${chainId}: transactions go to Hardhat's local chain (chain ID ${LOCAL_CHAIN_ID}) only, unless a deployment or operation script has passed its send gate on this very connection. Nothing was sent. To run the tests, select no network: no --network and no HARDHAT_NETWORK environment variable.`;
 }
 
 type Connection = NetworkConnection<string>;
@@ -91,35 +106,91 @@ type Next = (
   request: JsonRpcRequest,
 ) => Promise<JsonRpcResponse>;
 
-/** The chain ID of each connection whose configuration sets none. */
-const askedChainIds = new WeakMap<object, Promise<number>>();
+/** The connections the send gate has opened, with the chain each was opened for. */
+const openedConnections = new WeakMap<object, number>();
 
-function chainIdOf(
+/** Asks the connection's node for its chain ID, now. It only reads. */
+async function askChainId(
   context: HookContext,
   connection: Connection,
   next: Next,
 ): Promise<number> {
-  const configured = connection.networkConfig.chainId;
-  if (configured !== undefined) return Promise.resolve(configured);
-  let known = askedChainIds.get(connection);
-  if (known === undefined) {
-    known = next(context, connection, {
-      jsonrpc: "2.0",
-      id: "network-guard-chain-id",
-      method: "eth_chainId",
-      params: [],
-    }).then((response) => {
-      if (!("result" in response) || typeof response.result !== "string") {
-        throw new HardhatPluginError(
-          NETWORK_GUARD_ID,
-          `The node of network "${connection.networkName}" did not report its chain ID, so nothing was sent.`,
-        );
-      }
-      return Number(response.result);
-    });
-    askedChainIds.set(connection, known);
+  const response = await next(context, connection, {
+    jsonrpc: "2.0",
+    id: "network-guard-chain-id",
+    method: "eth_chainId",
+    params: [],
+  });
+  if (!("result" in response) || typeof response.result !== "string") {
+    throw new HardhatPluginError(
+      NETWORK_GUARD_ID,
+      `The node of network "${connection.networkName}" did not report its chain ID, so nothing was sent.`,
+    );
   }
-  return known;
+  return Number(response.result);
+}
+
+export type WriteDecision =
+  | { readonly allowed: true }
+  | { readonly allowed: false; readonly chainId: number };
+
+/**
+ * Whether a request that is not a read may go out on a connection that is
+ * not in-process. `configuredChainId` is the chain its configuration sets, if
+ * any; `openedChainId` the chain the send gate opened it for, if it did;
+ * `askChainId` asks its node now.
+ */
+export async function mayWrite(input: {
+  readonly configuredChainId: number | undefined;
+  readonly openedChainId: number | undefined;
+  readonly askChainId: () => Promise<number>;
+}): Promise<WriteDecision> {
+  const { configuredChainId, openedChainId } = input;
+  if (configuredChainId !== undefined && !isLocalChain(configuredChainId)) {
+    if (openedChainId !== configuredChainId) {
+      return { allowed: false, chainId: configuredChainId };
+    }
+  }
+  const chainId = await input.askChainId();
+  if (isLocalChain(chainId)) return { allowed: true };
+  if (openedChainId !== undefined && openedChainId === chainId) {
+    return { allowed: true };
+  }
+  return { allowed: false, chainId };
+}
+
+/**
+ * Answers OPEN_GATE_METHOD: opens `connection` when the token is one the send
+ * gate issued and has not been used, and the connection's node serves the
+ * chain the gate decided on. Throws, opening nothing, otherwise.
+ */
+async function openConnection(
+  context: HookContext,
+  connection: Connection,
+  request: JsonRpcRequest,
+  next: Next,
+): Promise<JsonRpcResponse> {
+  const params: unknown = request.params;
+  const token = Array.isArray(params) ? params[0] : undefined;
+  const decidedChainId = redeemSendGateToken(token);
+  if (decidedChainId === undefined) {
+    throw new HardhatPluginError(
+      NETWORK_GUARD_ID,
+      "The send gate did not issue this request, so nothing was opened.",
+    );
+  }
+  const chainId =
+    connection.networkConfig.type === "edr-simulated"
+      ? connection.networkConfig.chainId
+      : await askChainId(context, connection, next);
+  if (chainId !== decidedChainId) {
+    throw new HardhatPluginError(
+      NETWORK_GUARD_ID,
+      `The send gate decided on chain ${decidedChainId}, but network "${connection.networkName}" serves chain ${chainId}, so nothing was opened.`,
+    );
+  }
+  openedConnections.set(connection, chainId);
+  return { jsonrpc: "2.0", id: request.id, result: true };
 }
 
 /** The network hook: see the top of this file. */
@@ -129,19 +200,24 @@ async function onRequest(
   request: JsonRpcRequest,
   next: Next,
 ): Promise<JsonRpcResponse> {
+  if (request.method === OPEN_GATE_METHOD) {
+    return openConnection(context, connection, request, next);
+  }
   if (connection.networkConfig.type === "edr-simulated") {
     return next(context, connection, request);
   }
   if (READ_ONLY_METHODS.has(request.method)) {
     return next(context, connection, request);
   }
-  const chainId = await chainIdOf(context, connection, next);
-  if (isLocalChain(chainId) || gateConfirmedChain(chainId)) {
-    return next(context, connection, request);
-  }
+  const decision = await mayWrite({
+    configuredChainId: connection.networkConfig.chainId,
+    openedChainId: openedConnections.get(connection),
+    askChainId: () => askChainId(context, connection, next),
+  });
+  if (decision.allowed) return next(context, connection, request);
   throw new HardhatPluginError(
     NETWORK_GUARD_ID,
-    refusalReason(request.method, connection.networkName, chainId),
+    refusalReason(request.method, connection.networkName, decision.chainId),
   );
 }
 

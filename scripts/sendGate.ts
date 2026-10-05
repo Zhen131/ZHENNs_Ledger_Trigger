@@ -17,11 +17,21 @@
 // it can be tested without any network. `passSendGate` asks the node for the
 // chain ID, then applies `checkSendGate`, and throws when the answer is no.
 //
-// When `passSendGate` lets a script send on a chain that is not local, it
-// records that chain ID in this module, for the rest of the process. The
-// network guard (networkGuard.ts) lets transactions through to such a chain
-// only once it is recorded here. Nothing else can record a chain: the record
-// is private to this module, and no environment variable or setting feeds it.
+// Deciding and letting through are kept apart. `checkSendGate` and
+// `passSendGate` only decide: they let nothing through, whatever client they
+// are given. The scripts call `openSendGate`, which decides the same way and,
+// on a chain that is not local, then opens the one Hardhat network connection
+// behind the client it was given. It does so by sending OPEN_GATE_METHOD with
+// a single-use token over that connection. The network guard
+// (networkGuard.ts) answers that request itself: it redeems the token here,
+// asks the connection's own node for its chain ID, and only when that is the
+// chain the gate decided on does it record that very connection as open. The
+// record is kept by the guard per connection object, never per chain ID. A
+// stand-in client cannot open anything: its request never reaches a real
+// connection, and a request that does reaches only the connection it was
+// sent on.
+
+import { randomUUID } from "node:crypto";
 
 import { ScriptError } from "./scriptError.ts";
 
@@ -103,8 +113,9 @@ export function checkSendGate(input: GateInput): GateDecision {
 }
 
 /**
- * Asks the node for its chain ID and applies the gate. Returns the chain ID
+ * Asks `client` for its chain ID and applies the gate. Returns the chain ID
  * when `script` may send; throws a `ScriptError` with the reason otherwise.
+ * It only decides: it lets nothing through on any connection.
  */
 export async function passSendGate(
   client: { readonly getChainId: () => Promise<number> },
@@ -114,18 +125,62 @@ export async function passSendGate(
   const chainId = await client.getChainId();
   const decision = checkSendGate({ script, chainId, confirmation });
   if (!decision.allowed) throw new ScriptError(decision.reason);
-  if (!isLocalChain(chainId)) confirmedChains.add(chainId);
   return chainId;
 }
 
-/** The chains, not local, on which `passSendGate` has let a script send. */
-const confirmedChains = new Set<number>();
+/** The request `openSendGate` sends over the connection it opens. */
+export const OPEN_GATE_METHOD = "ledgerTrigger_openSendGate";
+
+/** Tokens issued by `openSendGate` and not yet redeemed, with their chain. */
+const pendingTokens = new Map<string, number>();
 
 /**
- * True when, in this process, the send gate has let a script send on
- * `chainId`, a chain that is not Hardhat's local one. Only `passSendGate`
- * records a chain.
+ * Decides like `passSendGate`, then, on a chain that is not local, opens the
+ * Hardhat network connection behind `client` for sending: the network guard
+ * lets that connection, and no other, send. Throws a `ScriptError`, with
+ * nothing sent, when the gate refuses or when the connection cannot be opened
+ * (it is not a Hardhat connection with the network guard loaded, or its node
+ * serves another chain than the one `client` reported).
  */
-export function gateConfirmedChain(chainId: number): boolean {
-  return confirmedChains.has(chainId);
+export async function openSendGate(
+  client: {
+    readonly getChainId: () => Promise<number>;
+    readonly request: (args: never) => Promise<unknown>;
+  },
+  script: GatedScript,
+  confirmation: string | undefined,
+): Promise<number> {
+  const chainId = await passSendGate(client, script, confirmation);
+  if (isLocalChain(chainId)) return chainId;
+  const token = randomUUID();
+  pendingTokens.set(token, chainId);
+  let opened: unknown;
+  try {
+    opened = await client.request({
+      method: OPEN_GATE_METHOD,
+      params: [token],
+    } as never);
+  } catch {
+    opened = false;
+  } finally {
+    pendingTokens.delete(token);
+  }
+  if (opened !== true) {
+    throw new ScriptError(
+      `The send gate could not open this connection to chain ${chainId}: it is not a Hardhat network connection with the network guard loaded, or its node serves another chain. Nothing was sent.`,
+    );
+  }
+  return chainId;
+}
+
+/**
+ * The chain a pending `openSendGate` token was issued for, or undefined. A
+ * token works once: redeeming it removes it. Only the network guard calls
+ * this, when the token reaches it over a connection.
+ */
+export function redeemSendGateToken(token: unknown): number | undefined {
+  if (typeof token !== "string") return undefined;
+  const chainId = pendingTokens.get(token);
+  pendingTokens.delete(token);
+  return chainId;
 }
