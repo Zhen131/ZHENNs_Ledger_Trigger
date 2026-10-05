@@ -42,6 +42,7 @@ describe("deployment settings from the environment", () => {
     assert.deepEqual(mockSettingsFrom({}), {
       mockPriceUsd: "2000",
       mockVenueEth: "10",
+      mockDeployerUsdc: "1000",
     });
   });
 
@@ -137,6 +138,12 @@ describe("deployment with mock parts", () => {
     assert.equal(report.venueEth, 10n * ONE_ETH);
     assert.equal(report.latestPrice, 2_000n * 10n ** 8n);
     assert.equal(report.chainId, 31_337);
+    const usdc = await s.viem.getContractAt("MockUSDC", p.usdc);
+    assert.equal(
+      await usdc.read.balanceOf([s.owner.account.address]),
+      1_000n * ONE_USDC,
+    );
+    assert.equal(report.deployerUsdc, 1_000n * ONE_USDC);
   });
 
   it("reports parameters equal to what the chain holds, and the block that holds the deployment", async () => {

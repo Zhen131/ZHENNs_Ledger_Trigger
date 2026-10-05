@@ -25,10 +25,11 @@ export const VARIABLES = {
   maxPriceAgeSeconds: "TRIGGER_MAX_PRICE_AGE_SECONDS",
   maxSlippageBps: "TRIGGER_MAX_SLIPPAGE_BPS",
   venueFeeBps: "TRIGGER_VENUE_FEE_BPS",
-  // Deployment, mock-parts mode: the mock feed's first price and the ETH
-  // stocked in the mock swap venue.
+  // Deployment, mock-parts mode: the mock feed's first price, the ETH stocked
+  // in the mock swap venue and the mock USDC minted to the deploying account.
   mockPriceUsd: "TRIGGER_MOCK_PRICE_USD",
   mockVenueEth: "TRIGGER_MOCK_VENUE_ETH",
+  mockDeployerUsdc: "TRIGGER_MOCK_DEPLOYER_USDC",
   // Operations: the deployed LedgerTrigger, and what each operation needs.
   contractAddress: "TRIGGER_CONTRACT_ADDRESS",
   orderUsdc: "TRIGGER_ORDER_USDC",

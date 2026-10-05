@@ -95,7 +95,7 @@ export const DEMO_NUMBERS = {
   targetPriceUsd: "2000",
   /** Each order's amount. */
   orderUsdc: "100",
-  /** USDC the owner mints before the first order. */
+  /** Mock USDC minted to the owner, who also deploys. */
   ownerUsdc: "1000",
   /** The allowance S15 starts with, below the order amount. */
   shortAllowanceUsdc: "50",
@@ -193,6 +193,7 @@ export async function runDemo(input: {
     mocks: {
       mockPriceUsd: DEMO_NUMBERS.startPriceUsd,
       mockVenueEth: DEMO_NUMBERS.venueEth,
+      mockDeployerUsdc: DEMO_NUMBERS.ownerUsdc,
     },
   });
   const params = deployment.parameters;
@@ -207,11 +208,6 @@ export async function runDemo(input: {
   const target = toPrice(DEMO_NUMBERS.targetPriceUsd);
   const eth = (wei: bigint) => `${formatDecimal(wei, 18)} ETH`;
   const as = (wallet: typeof owner) => ({ account: wallet.account });
-
-  await mined(
-    publicClient,
-    await usdc.write.mint([toUsdc(DEMO_NUMBERS.ownerUsdc)], as(owner)),
-  );
 
   const status = async (orderId: bigint) =>
     orderStatusName(await trigger.read.statusOf([orderId]));

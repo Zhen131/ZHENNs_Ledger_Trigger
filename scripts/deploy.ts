@@ -1,8 +1,9 @@
 // Deploys LedgerTrigger with the parts it needs, in one of two modes:
 //
 // - mock parts (for a local chain): deploys MockUSDC, MockPriceFeed,
-//   MockSwapVenue, stocks the swap venue with some ETH, then deploys
-//   LedgerTrigger;
+//   MockSwapVenue and LedgerTrigger, stocks the swap venue with some ETH and
+//   mints some mock USDC to the deploying account, so that it can place and
+//   fill orders straight away;
 // - external parts (for a test network): takes the addresses of a USDC token
 //   and a price feed that already exist, checks that both hold contract code
 //   and answer like a token and a price feed, then deploys MockSwapVenue and
@@ -59,6 +60,8 @@ export type MockSettings = {
   readonly mockPriceUsd: string;
   /** ETH stocked in the mock swap venue, for example "10". */
   readonly mockVenueEth: string;
+  /** Mock USDC minted to the deploying account, for example "1000". */
+  readonly mockDeployerUsdc: string;
 };
 
 /** Defaults of every setting that has one. */
@@ -70,6 +73,7 @@ export const DEPLOY_DEFAULTS = {
   venueFeeBps: 0n,
   mockPriceUsd: "2000",
   mockVenueEth: "10",
+  mockDeployerUsdc: "1000",
 } as const;
 
 /** The settings both modes take, from `env`, with the defaults filled in. */
@@ -110,8 +114,12 @@ export function mockSettingsFrom(env: Environment): MockSettings {
   const mockVenueEth =
     readText(env, VARIABLES.mockVenueEth) ?? DEPLOY_DEFAULTS.mockVenueEth;
   parseDecimal(mockPriceUsd, MOCK_FEED_DECIMALS, VARIABLES.mockPriceUsd);
+  const mockDeployerUsdc =
+    readText(env, VARIABLES.mockDeployerUsdc) ??
+    DEPLOY_DEFAULTS.mockDeployerUsdc;
   parseDecimal(mockVenueEth, ETH_DECIMALS, VARIABLES.mockVenueEth);
-  return { mockPriceUsd, mockVenueEth };
+  parseDecimal(mockDeployerUsdc, ETH_DECIMALS, VARIABLES.mockDeployerUsdc);
+  return { mockPriceUsd, mockVenueEth, mockDeployerUsdc };
 }
 
 /** The two external addresses, from `env`. Both are required. */
@@ -158,6 +166,8 @@ export type DeploymentReport = {
   readonly venueFeeBps: bigint;
   /** ETH the swap venue holds, in wei. */
   readonly venueEth: bigint;
+  /** The deploying account's USDC balance, in the token's smallest unit. */
+  readonly deployerUsdc: bigint;
 };
 
 /**
@@ -344,6 +354,18 @@ export async function deployWithMocks(input: {
     });
     await publicClient.waitForTransactionReceipt({ hash });
   }
+  const deployerUsdc = parseDecimal(
+    mocks.mockDeployerUsdc,
+    usdcDecimals,
+    VARIABLES.mockDeployerUsdc,
+  );
+  if (deployerUsdc > 0n) {
+    await publicClient.waitForTransactionReceipt({
+      hash: await usdc.write.mint([deployerUsdc], {
+        account: deployer.account,
+      }),
+    });
+  }
   const [, latestPrice] = await feed.read.latestRoundData();
   return {
     chainId,
@@ -364,6 +386,7 @@ export async function deployWithMocks(input: {
     venueEth: await publicClient.getBalance({
       address: deployed.venue.address,
     }),
+    deployerUsdc: await usdc.read.balanceOf([deployer.account.address]),
   };
 }
 
@@ -423,6 +446,12 @@ export async function deployWithExternalParts(input: {
       venueEth: await publicClient.getBalance({
         address: deployed.venue.address,
       }),
+      deployerUsdc: await publicClient.readContract({
+        address: input.usdc,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [deployer.account.address],
+      }),
     },
   };
 }
@@ -466,6 +495,7 @@ export function formatDeployment(report: DeploymentReport): string[] {
     `  maxPriceAge             ${p.maxPriceAge} (seconds; ${formatDecimal((p.maxPriceAge * 100n) / 60n, 2)} minutes)`,
     `  maxSlippageBps          ${p.maxSlippageBps} (basis points; ${percent(p.maxSlippageBps)})`,
     `Price feed: ${report.feedDecimals} decimals, latest price ${formatDecimal(report.latestPrice, report.feedDecimals)} USD.`,
+    `The deploying account holds ${formatDecimal(report.deployerUsdc, report.usdcDecimals)} USDC.`,
     `LedgerTrigger was deployed in block ${report.triggerBlock}: use it as KEEPER_FROM_BLOCK.`,
   ];
 }
