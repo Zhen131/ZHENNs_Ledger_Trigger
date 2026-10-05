@@ -15,7 +15,9 @@ import {ISwapVenue} from "../interfaces/ISwapVenue.sol";
 /// fee fixed at deployment. It pays out of the ETH that has been sent to it beforehand.
 /// @dev Not a real exchange. It is open to everyone and has no admin: nobody can change its fee,
 /// its token or its feed after deployment, and nobody can take its ETH out except by swapping.
-/// It does not look at how old the price is, just as a real venue does not.
+/// It does not look at how old the price is, just as a real venue does not. The error
+/// `SafeERC20FailedOperation` in its interface comes from OpenZeppelin: a USDC transfer that
+/// failed without an error of its own, or returned false.
 contract MockSwapVenue is ISwapVenue {
     using SafeERC20 for IERC20;
 
@@ -28,15 +30,20 @@ contract MockSwapVenue is ISwapVenue {
     /// @notice Largest power of ten that fits in a uint256 is 10^77.
     uint256 private constant MAX_SCALE_EXPONENT = 77;
 
-    /// @notice The USDC token this venue takes.
+    /// @notice The USDC token this venue takes. Fixed at deployment.
+    /// @dev Anyone can read it; reading it never reverts.
     IERC20 public immutable usdc;
-    /// @notice The price feed this venue swaps at (ETH price in USD).
+    /// @notice The price feed this venue swaps at (ETH price in USD). Fixed at deployment.
+    /// @dev Anyone can read it; reading it never reverts.
     IPriceFeed public immutable priceFeed;
     /// @notice Fee in basis points, taken out of the ETH paid. Fixed at deployment.
+    /// @dev Anyone can read it; reading it never reverts.
     uint256 public immutable feeBps;
     /// @notice Decimals of `usdc`, read from the token at deployment.
+    /// @dev Anyone can read it; reading it never reverts.
     uint8 public immutable usdcDecimals;
     /// @notice Decimals of `priceFeed`, read from the feed at deployment.
+    /// @dev Anyone can read it; reading it never reverts.
     uint8 public immutable priceDecimals;
     /// @notice 10^k with k = 18 + priceDecimals - usdcDecimals.
     uint256 private immutable scale;
@@ -65,7 +72,8 @@ contract MockSwapVenue is ISwapVenue {
     /// @notice Deploys the venue for one token and one price feed, with a fixed fee.
     /// @dev Reads and stores the decimals of the token and of the feed. Reverts with
     /// `FeeTooHigh` if `feeBps_` is 100 % (10000) or more, and with `UnsupportedDecimals` if the
-    /// decimals do not fit the conversion.
+    /// decimals do not fit the conversion. It also reverts if the token or the feed does not
+    /// report its decimals.
     /// @param usdc_ The USDC token.
     /// @param priceFeed_ The price feed for ETH in USD.
     /// @param feeBps_ Fee in basis points (30 is 0.3 %). Must be below 10000. Never changes.

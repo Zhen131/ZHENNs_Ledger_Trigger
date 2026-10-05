@@ -42,6 +42,7 @@ contract MockPriceFeed is IPriceFeed {
     }
 
     /// @inheritdoc IPriceFeed
+    /// @dev Anyone can call it; it never reverts. The value is the one given at deployment.
     function decimals() external view returns (uint8) {
         return feedDecimals;
     }

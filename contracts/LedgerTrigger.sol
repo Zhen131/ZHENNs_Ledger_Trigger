@@ -20,6 +20,9 @@ import {ISwapVenue} from "./interfaces/ISwapVenue.sol";
 /// @dev There is no admin: no pause, no upgrade, no setter and no withdrawal. The seven deployment
 /// parameters can never change. The status `Expired` is never stored; `statusOf` works it out from
 /// the expiry. The contract keeps no USDC and no ETH: a fill passes all of both straight through.
+/// Two errors in its interface come from OpenZeppelin: `ReentrancyGuardReentrantCall` (a call to
+/// `fillOrder` made while a fill is running) and `SafeERC20FailedOperation` (a USDC call that
+/// failed without an error of its own, or returned false).
 contract LedgerTrigger is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -101,23 +104,36 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @notice ETH has 18 decimals.
     uint256 private constant ETH_DECIMALS = 18;
 
-    /// @notice The USDC token that orders spend.
+    /// @notice The USDC token that orders spend. Set at deployment, never changes.
+    /// @dev Anyone can read it; reading it never reverts.
     IERC20 public immutable usdc;
-    /// @notice The price feed for ETH in USD.
+    /// @notice The price feed for ETH in USD. Set at deployment, never changes.
+    /// @dev Anyone can read it; reading it never reverts.
     IPriceFeed public immutable priceFeed;
-    /// @notice The swap venue that turns USDC into ETH.
+    /// @notice The swap venue that turns USDC into ETH. Set at deployment, never changes.
+    /// @dev Anyone can read it; reading it never reverts.
     ISwapVenue public immutable swapVenue;
-    /// @notice Largest `usdcAmount` of one order, in the token's smallest unit.
+    /// @notice Largest `usdcAmount` of one order, in the token's smallest unit. Set at
+    /// deployment, never changes.
+    /// @dev Anyone can read it; reading it never reverts.
     uint256 public immutable maxOrderAmount;
-    /// @notice Largest number of open orders one owner can have at the same time.
+    /// @notice Largest number of open orders one owner can have at the same time. Set at
+    /// deployment, never changes.
+    /// @dev Anyone can read it; reading it never reverts.
     uint256 public immutable maxOpenOrdersPerOwner;
-    /// @notice Oldest price, in seconds since its update, that still counts as current.
+    /// @notice Oldest price, in seconds since its update, that still counts as current. Set at
+    /// deployment, never changes.
+    /// @dev Anyone can read it; reading it never reverts.
     uint256 public immutable maxPriceAge;
-    /// @notice Allowed price slippage in basis points (100 is 1 %).
+    /// @notice Allowed price slippage in basis points (100 is 1 %). Set at deployment, never
+    /// changes.
+    /// @dev Anyone can read it; reading it never reverts.
     uint256 public immutable maxSlippageBps;
     /// @notice Decimals of `usdc`, read from the token at deployment.
+    /// @dev Anyone can read it; reading it never reverts.
     uint8 public immutable usdcDecimals;
     /// @notice Decimals of `priceFeed`, read from the feed at deployment.
+    /// @dev Anyone can read it; reading it never reverts.
     uint8 public immutable priceDecimals;
 
     /// @notice Order ID to order. IDs start at 1; ID 0 is never used.
@@ -308,7 +324,8 @@ contract LedgerTrigger is ReentrancyGuard {
     /// `ZeroPriceFeed`, `ZeroSwapVenue`); `maxOrderAmount_`, `maxOpenOrdersPerOwner_` and
     /// `maxPriceAge_` are above zero (`ZeroMaxOrderAmount`, `ZeroMaxOpenOrdersPerOwner`,
     /// `ZeroMaxPriceAge`); `maxSlippageBps_` is below 10000 (`SlippageTooHigh`), zero allowed.
-    /// Only then does it read the decimals of the token and of the price feed and store them.
+    /// Only then does it read the decimals of the token and of the price feed and store them; it
+    /// also reverts if either of them does not report its decimals.
     /// @param usdc_ The USDC token (an ERC-20 token address).
     /// @param priceFeed_ The price feed for ETH in USD (a Chainlink-style feed address).
     /// @param swapVenue_ The swap venue (an `ISwapVenue` address).
@@ -438,12 +455,15 @@ contract LedgerTrigger is ReentrancyGuard {
     /// not the venue's return value: its USDC balance must be back to what it was before the USDC
     /// was taken (`SwapUsdcMismatch`), and its ETH balance must have gone up by at least the
     /// minimum (`InsufficientEthOut`). It then sets the venue's allowance back to zero, sends all of
-    /// the ETH that came in to the recipient (`EthTransferFailed`) and emits `OrderFilled`. Any
-    /// rejection undoes the whole call: the order stays `Open` and no USDC or ETH moves. The
-    /// minimum ETH output, in wei, is the larger of `usdcAmount * 10^k / targetPrice` (never pay
-    /// more than the target price) and `usdcAmount * 10^k * (10000 - maxSlippageBps) /
-    /// (price * 10000)` (never get much less than the feed price gives), each worked out in full
-    /// and rounded down once, with k = 18 + price feed decimals - USDC decimals.
+    /// the ETH that came in to the recipient (`EthTransferFailed`) and emits `OrderFilled`. If the
+    /// price feed, the USDC token or the swap venue reverts on the way, the fill reverts with that
+    /// error; a USDC call that fails without an error of its own reverts with
+    /// `SafeERC20FailedOperation`. Any rejection undoes the whole call: the order stays `Open` and
+    /// no USDC or ETH moves. The minimum ETH output, in wei, is the larger of
+    /// `usdcAmount * 10^k / targetPrice` (never pay more than the target price) and
+    /// `usdcAmount * 10^k * (10000 - maxSlippageBps) / (price * 10000)` (never get much less than
+    /// the feed price gives), each worked out in full and rounded down once, with
+    /// k = 18 + price feed decimals - USDC decimals.
     /// @param orderId The order (uint256).
     function fillOrder(
         uint256 orderId
@@ -551,7 +571,8 @@ contract LedgerTrigger is ReentrancyGuard {
     /// fill the order. Rejects an ID that no order has (`OrderNotFound`), ID 0 included. It runs
     /// the very checks that `fillOrder` runs after checking the caller, in the same order: stored
     /// status, expiry, price, allowance, balance. It does not try the swap, so a fill it reports as
-    /// possible can fail at the swap venue or when sending the ETH.
+    /// possible can fail at the swap venue or when sending the ETH. It also reverts if the price
+    /// feed or the USDC token reverts when it reads them.
     /// @param orderId The order (uint256).
     /// @return fillable True exactly when `reason` is `None` (bool).
     /// @return reason The first reason found, or `None` (a `FillBlocker`, uint8 in the ABI).

@@ -7,7 +7,12 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 /// @author Zhen Zhu
 /// @notice Stand-in for USDC in local tests and local demos: a plain ERC-20 token with 6 decimals.
 /// Anyone can mint any amount to themselves. There is no supply cap and no admin.
-/// @dev Not a real asset. Never treat its balances as having value.
+/// @dev Not a real asset. Never treat its balances as having value. Apart from `mint` and
+/// `decimals`, its functions, events and errors are OpenZeppelin's ERC20, unchanged: anyone can
+/// read `name`, `symbol`, `totalSupply`, `balanceOf` and `allowance`, which never revert;
+/// anyone can `transfer` their own tokens, `approve` a spender for them, and `transferFrom` up
+/// to the allowance they were given, each of which reverts with the matching `ERC20...` error
+/// when the balance or the allowance is too small or an address is the zero address.
 contract MockUSDC is ERC20 {
     /// @notice Deploys the token with zero supply.
     constructor() ERC20("Mock USD Coin", "mUSDC") {}
@@ -21,6 +26,7 @@ contract MockUSDC is ERC20 {
     }
 
     /// @notice Number of decimals, the same as USDC.
+    /// @dev Anyone can call it; it never reverts.
     /// @return Always 6.
     function decimals() public pure override returns (uint8) {
         return 6;
