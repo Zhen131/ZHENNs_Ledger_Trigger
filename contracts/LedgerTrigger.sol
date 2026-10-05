@@ -229,4 +229,117 @@ contract LedgerTrigger {
         usdcDecimals = IERC20Metadata(address(usdc_)).decimals();
         priceDecimals = priceFeed_.decimals();
     }
+
+    /// @notice Places an `Open` order for the caller, who becomes its owner. Moves no tokens and
+    /// no ETH, and needs no USDC allowance.
+    /// @dev Anyone can call it. Rejects, in this order: a zero `usdcAmount` (`ZeroAmount`); a
+    /// `usdcAmount` above `maxOrderAmount` (`AmountAboveMax`); a zero `targetPrice`
+    /// (`ZeroTargetPrice`); a zero `recipient` (`ZeroRecipient`); a zero `executor`
+    /// (`ZeroExecutor`); an `expiry` not after the current block's time (`ExpiryNotInFuture`);
+    /// a caller who already has `maxOpenOrdersPerOwner` open orders, expired ones included
+    /// (`TooManyOpenOrders`). The executor may be the caller. Emits `OrderCreated`.
+    /// @param usdcAmount USDC to spend, in the token's smallest unit (uint256).
+    /// @param targetPrice ETH price in USD with the price feed's decimals (uint256).
+    /// @param recipient Address that receives the ETH.
+    /// @param executor Address the owner names for filling the order; may be the owner.
+    /// @param expiry Last second, in Unix time, at which the order is valid (uint256).
+    /// @return orderId ID of the new order: 1 for the first order, then one more each time.
+    function createOrder(
+        uint256 usdcAmount,
+        uint256 targetPrice,
+        address recipient,
+        address executor,
+        uint256 expiry
+    ) external returns (uint256 orderId) {
+        if (usdcAmount == 0) revert ZeroAmount();
+        if (usdcAmount > maxOrderAmount) {
+            revert AmountAboveMax(usdcAmount, maxOrderAmount);
+        }
+        if (targetPrice == 0) revert ZeroTargetPrice();
+        if (recipient == address(0)) revert ZeroRecipient();
+        if (executor == address(0)) revert ZeroExecutor();
+        if (!(expiry > block.timestamp)) {
+            revert ExpiryNotInFuture(expiry, block.timestamp);
+        }
+        OpenOrders storage open = openOrdersOf[msg.sender];
+        if (!(open.count < maxOpenOrdersPerOwner)) {
+            revert TooManyOpenOrders(msg.sender, maxOpenOrdersPerOwner);
+        }
+
+        orderId = ++lastOrderId;
+        orders[orderId] = Order({
+            owner: msg.sender,
+            executor: executor,
+            recipient: recipient,
+            usdcAmount: usdcAmount,
+            targetPrice: targetPrice,
+            createdAt: block.timestamp,
+            expiry: expiry,
+            status: OrderStatus.Open
+        });
+        ++open.count;
+        open.total += usdcAmount;
+
+        emit OrderCreated(
+            orderId,
+            msg.sender,
+            executor,
+            recipient,
+            usdcAmount,
+            targetPrice,
+            expiry
+        );
+    }
+
+    /// @notice Returns every field of an order, with its status as stored. An expired order still
+    /// shows `Open` here; `statusOf` gives the status worked out from the expiry.
+    /// @dev Anyone can call it. Rejects an ID that no order has (`OrderNotFound`), ID 0 included.
+    /// @param orderId The order (uint256).
+    /// @return order The stored order.
+    function getOrder(
+        uint256 orderId
+    ) external view orderExists(orderId) returns (Order memory order) {
+        return orders[orderId];
+    }
+
+    /// @notice Returns the status of an order as it stands now: `Expired` for an order stored as
+    /// `Open` whose expiry is before the current block's time, otherwise the stored status. At the
+    /// expiry second itself the order is still `Open`.
+    /// @dev Anyone can call it. Rejects an ID that no order has (`OrderNotFound`), ID 0 included;
+    /// it never returns `None`.
+    /// @param orderId The order (uint256).
+    /// @return status `Open`, `Filled`, `Cancelled` or `Expired`.
+    function statusOf(
+        uint256 orderId
+    ) external view orderExists(orderId) returns (OrderStatus status) {
+        Order storage order = orders[orderId];
+        status = order.status;
+        if (status == OrderStatus.Open && _isExpired(order)) {
+            status = OrderStatus.Expired;
+        }
+    }
+
+    /// @notice Number of orders of `owner` whose stored status is `Open`, expired ones included.
+    /// @dev Anyone can call it; it never reverts. Zero for an address with no orders.
+    /// @param owner Any address.
+    /// @return The number of open orders (uint256).
+    function openOrderCount(address owner) external view returns (uint256) {
+        return openOrdersOf[owner].count;
+    }
+
+    /// @notice USDC amounts of the orders of `owner` whose stored status is `Open`, expired ones
+    /// included, added up. This is the allowance `owner` needs to give this contract to cover them.
+    /// @dev Anyone can call it; it never reverts. Zero for an address with no orders.
+    /// @param owner Any address.
+    /// @return The total, in the token's smallest unit (uint256).
+    function openOrderTotal(address owner) external view returns (uint256) {
+        return openOrdersOf[owner].total;
+    }
+
+    /// @notice True when the current block's time is after the order's expiry.
+    /// @param order The order.
+    /// @return Whether the order has expired.
+    function _isExpired(Order storage order) private view returns (bool) {
+        return block.timestamp > order.expiry;
+    }
 }
