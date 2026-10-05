@@ -12,7 +12,7 @@ Names in `code font` are the names used in the contract. Amounts are whole numbe
 2. **Three roles: owner, executor and recipient. There is no admin.** Only the owner can cancel an order. Only the owner and the executor named in that order can fill it.
 3. **Every fill gives two hard guarantees: the price paid is never above the target price, and the ETH received is never less than the price feed's price gives, minus the allowed slippage.** Both minimums are whole numbers rounded down, so each can fall short of the exact value by less than one wei, the smallest unit of ETH; that remainder is not counted (Appendix A).
 4. **An order is stored in one of three states: `Open`, `Filled` or `Cancelled`. `Expired` is never stored; it is worked out from the time.** `Filled` and `Cancelled` are final. An expired order can no longer be filled; its owner can only cancel it, which frees its slot.
-5. **The contract keeps no money.** Its USDC balance and its ETH balance are the same before and after every fill.
+5. **The contract keeps no money.** Its USDC balance and its ETH balance are the same before and after every fill. That is the whole promise: it is about fills, not about what the balance holds. USDC that someone sends straight to the contract cannot be refused, because a token transfer does not ask the receiver, and it stays in the contract for good, since nothing can take it out. The same goes for ETH forced in by a way that skips `receive`.
 
 ## 1. Roles and permissions
 
@@ -199,7 +199,7 @@ At deployment: none of the three addresses is the zero address; `maxOrderAmount`
 
 - The contract always knows each order's owner, executor and recipient, and none of the three can change after the order is placed.
 - For every address, the open-order count and total always equal the number and the USDC sum of its orders whose stored status is `Open`.
-- The contract keeps no money: its USDC and ETH balances are the same before and after every fill.
+- The contract keeps no money: its USDC and ETH balances are the same before and after every fill. USDC sent straight to the contract cannot be refused, and stays there for good, untouched by any fill.
 
 ## 5. State machine
 

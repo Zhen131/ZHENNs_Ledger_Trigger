@@ -10,7 +10,7 @@ The contract `LedgerTrigger` promises five things. [docs/contract-spec.md](docs/
 2. **Three roles: owner, executor and recipient. There is no admin.** Only the owner can cancel an order. Only the owner and the executor named in that order can fill it. Nobody can pause the contract, upgrade it, change its settings or take money out of it.
 3. **Every fill gives two hard guarantees: the price paid is never above the target price, and the ETH received is never less than the price feed's price gives, minus the allowed slippage.** Both minimums are whole numbers rounded down, so each can fall short of the exact value by less than one wei, the smallest unit of ETH; that remainder is not counted.
 4. **An order is stored as `Open`, `Filled` or `Cancelled`. `Expired` is never stored; it is worked out from the time.** `Filled` and `Cancelled` are final. An expired order can no longer be filled; its owner can only cancel it, which frees its slot.
-5. **The contract keeps no money.** Its USDC and ETH balances are the same before and after every fill.
+5. **The contract keeps no money.** Its USDC and ETH balances are the same before and after every fill. This is a promise about fills only: USDC that someone sends straight to the contract cannot be refused, because a token transfer does not ask the receiver, and it stays in the contract for good, since nothing can take it out.
 
 ## Where it stands
 

@@ -19,7 +19,9 @@ import {ISwapVenue} from "./interfaces/ISwapVenue.sol";
 /// taken from the owner, swapped for ETH at the swap venue and the ETH sent to the recipient.
 /// @dev There is no admin: no pause, no upgrade, no setter and no withdrawal. The seven deployment
 /// parameters can never change. The status `Expired` is never stored; `statusOf` works it out from
-/// the expiry. The contract keeps no USDC and no ETH: a fill passes all of both straight through.
+/// the expiry. A fill keeps none of the USDC and ETH it moves: it passes all of both straight
+/// through. USDC sent straight to this contract cannot be refused, and stays here for good, as
+/// nothing can take it out.
 /// Two errors in its interface come from OpenZeppelin: `ReentrancyGuardReentrantCall` (a call to
 /// `fillOrder` made while a fill is running) and `SafeERC20FailedOperation` (a USDC transfer or
 /// approval that did not revert but returned something other than true, such as false, or a USDC
