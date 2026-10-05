@@ -8,9 +8,11 @@ Early skeleton. What exists today:
 
 - a Hardhat 3 project with TypeScript tests (Node test runner and viem);
 - `MockUSDC`, a 6-decimal test token that anyone can mint to themselves, with its tests;
+- two interfaces the order contract will use: `IPriceFeed` (the two Chainlink price feed functions it reads) and `ISwapVenue` (swap USDC for ETH);
+- `MockPriceFeed`, a price feed whose price and update time anyone can set, and `MockSwapVenue`, which swaps USDC for ETH at the feed price minus a fee fixed at deployment, both with their tests;
 - one command that runs every repository check (below).
 
-The order contract, the mock price feed and swap venue, the keeper and the demo are not written yet.
+The order contract, the keeper and the demo are not written yet.
 
 ## Requirements
 
