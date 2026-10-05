@@ -158,6 +158,28 @@ describe("keeper configuration: missing and invalid values", () => {
     });
   }
 
+  it("still gives the pause between rounds when other variables have problems: the configured one if valid, else the default", () => {
+    const { env } = freshEnvironment();
+    const missing = { ...env, [ENV.fromBlock]: undefined };
+
+    const configured = readConfig({ ...missing, [ENV.intervalSeconds]: "7" });
+    const invalidInterval = readConfig({
+      ...missing,
+      [ENV.intervalSeconds]: "soon",
+    });
+    const unset = readConfig(missing);
+
+    assert.equal(configured.kind, "problems");
+    assert.equal(configured.intervalSeconds, 7);
+    assert.equal(invalidInterval.kind, "problems");
+    assert.equal(invalidInterval.intervalSeconds, DEFAULTS.intervalSeconds);
+    assert.equal(unset.intervalSeconds, DEFAULTS.intervalSeconds);
+    assert.equal(
+      expectConfig({ ...env, [ENV.intervalSeconds]: "7" }).intervalSeconds,
+      7,
+    );
+  });
+
   it("names every missing variable at once", () => {
     const problems = expectProblems({});
     assert.deepEqual(

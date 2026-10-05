@@ -73,9 +73,22 @@ export type ConfigProblem = {
   readonly message: string;
 };
 
+/**
+ * Either the configuration or every problem found. Both say how long to wait
+ * between rounds: the configured interval when it is valid, else the default,
+ * so a keeper that keeps running can retry at that pace while problems last.
+ */
 export type ConfigResult =
-  | { readonly kind: "config"; readonly config: KeeperConfig }
-  | { readonly kind: "problems"; readonly problems: readonly ConfigProblem[] };
+  | {
+      readonly kind: "config";
+      readonly config: KeeperConfig;
+      readonly intervalSeconds: number;
+    }
+  | {
+      readonly kind: "problems";
+      readonly problems: readonly ConfigProblem[];
+      readonly intervalSeconds: number;
+    };
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -131,8 +144,13 @@ export function readConfig(env: Environment): ConfigResult {
     1n,
     invalid,
   );
-  if (interval !== undefined && interval > BigInt(Number.MAX_SAFE_INTEGER)) {
-    invalid(ENV.intervalSeconds, "is too large");
+  let intervalSeconds: number = DEFAULTS.intervalSeconds;
+  if (interval !== undefined) {
+    if (interval > BigInt(Number.MAX_SAFE_INTEGER)) {
+      invalid(ENV.intervalSeconds, "is too large");
+    } else {
+      intervalSeconds = Number(interval);
+    }
   }
 
   if (
@@ -143,7 +161,7 @@ export function readConfig(env: Environment): ConfigResult {
     fromBlock === undefined ||
     maxFeeWei === undefined
   ) {
-    return { kind: "problems", problems };
+    return { kind: "problems", problems, intervalSeconds };
   }
   return {
     kind: "config",
@@ -153,10 +171,10 @@ export function readConfig(env: Environment): ConfigResult {
       contractAddress: getAddress(contractText),
       fromBlock,
       maxFeeWei,
-      intervalSeconds:
-        interval === undefined ? DEFAULTS.intervalSeconds : Number(interval),
+      intervalSeconds,
       maxBlockRange: maxBlockRange ?? DEFAULTS.maxBlockRange,
     },
+    intervalSeconds,
   };
 }
 

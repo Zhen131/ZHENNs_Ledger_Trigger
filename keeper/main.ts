@@ -7,16 +7,16 @@
 // The settings come from environment variables only (see config.ts and the
 // README). Build the contracts first: the ABIs are read from the build output.
 //
-// Start-up: read the settings and the ABIs; a problem with either ends the
-// keeper, since no later round could fix it. Then connect: ask the node for
-// its chain ID (nothing is assumed about which chain it is) and check that the
-// contract address holds code. The first round connects; if that fails, the
-// round counts as an error, and in keep-running mode the next round tries to
-// connect again. Once connected, rounds run as described in runOnce.ts.
+// Before its first round the keeper gets ready: it checks the settings, reads
+// the ABIs, asks the node for its chain ID (nothing is assumed about which
+// chain it is) and checks that the contract address holds code. When any of
+// that fails, the round is an error: in --once mode the keeper exits with 1;
+// in keep-running mode it logs the error and tries again in the next round.
+// Once ready, rounds run as described in runOnce.ts.
 //
-// Exit codes: 0 when everything went through or was skipped; 1 on bad
-// settings or missing build output, or, in --once mode, on any error in the
-// round, connecting included; 2 on an unknown command-line argument.
+// Exit codes: 0 when everything went through or was skipped; 1, in --once
+// mode, on any error, getting ready included; 2 on an unknown command-line
+// argument. In keep-running mode the keeper runs until it is stopped.
 //
 // The private key and the node URL are never printed: every line comes from
 // `formatLogLine`, and errors are logged as this project's own sentence and
@@ -33,7 +33,7 @@ import {
 
 import { BuildOutputError, loadAbis, type KeeperAbis } from "./abi.ts";
 import { FailureKind, classifyFailure } from "./classify.ts";
-import { readConfig, type KeeperConfig } from "./config.ts";
+import { readConfig, type ConfigResult, type KeeperConfig } from "./config.ts";
 import { keepRunning } from "./keepRunning.ts";
 import {
   Action,
@@ -141,17 +141,25 @@ async function connect(
   };
 }
 
-async function main(): Promise<number> {
-  const mode = readMode(process.argv.slice(2));
-  if (mode === undefined) {
-    print(errorEntry("usage", USAGE));
-    return 2;
-  }
+type Preparation =
+  | {
+      readonly kind: "ready";
+      readonly config: KeeperConfig;
+      readonly abis: KeeperAbis;
+      readonly clients: KeeperClients;
+      readonly chainId: number;
+    }
+  | { readonly kind: "not-ready"; readonly entries: readonly LogEntry[] };
 
-  const result = readConfig(process.env);
+/**
+ * What a round needs before it can start: valid settings, the ABIs and a
+ * connection. Returns the error entries instead when any of them is missing.
+ */
+async function prepare(result: ConfigResult): Promise<Preparation> {
   if (result.kind === "problems") {
-    for (const problem of result.problems) {
-      print({
+    return {
+      kind: "not-ready",
+      entries: result.problems.map((problem) => ({
         orderId: undefined,
         action: Action.Error,
         reason: problem.kind,
@@ -159,48 +167,75 @@ async function main(): Promise<number> {
           ["variable", problem.variable],
           ["message", `${problem.variable} ${problem.message}.`],
         ],
-      });
-    }
-    return 1;
+      })),
+    };
   }
   const { config } = result;
-
   let abis: KeeperAbis;
   try {
     abis = loadAbis();
   } catch (error) {
-    print(
-      errorEntry(
-        "build-output-missing",
-        error instanceof BuildOutputError
-          ? error.message
-          : "The build output could not be read.",
-      ),
-    );
-    return 1;
+    return {
+      kind: "not-ready",
+      entries: [
+        errorEntry(
+          "build-output-missing",
+          error instanceof BuildOutputError
+            ? error.message
+            : "The build output could not be read.",
+        ),
+      ],
+    };
+  }
+  const connection = await connect(config, abis);
+  if (connection.kind === "failed") {
+    return { kind: "not-ready", entries: [connection.entry] };
+  }
+  return {
+    kind: "ready",
+    config,
+    abis,
+    clients: connection.clients,
+    chainId: connection.chainId,
+  };
+}
+
+async function main(): Promise<number> {
+  const mode = readMode(process.argv.slice(2));
+  if (mode === undefined) {
+    print(errorEntry("usage", USAGE));
+    return 2;
   }
 
-  let clients: KeeperClients | undefined;
+  // The environment does not change while the keeper runs, so it is read once.
+  const result = readConfig(process.env);
+  let ready: Extract<Preparation, { kind: "ready" }> | undefined;
   const runRound = async (): Promise<RoundReport> => {
-    if (clients === undefined) {
-      const connection = await connect(config, abis);
-      if (connection.kind === "failed") {
-        print(connection.entry);
-        return { orders: [], roundError: connection.entry };
+    if (ready === undefined) {
+      const preparation = await prepare(result);
+      if (preparation.kind === "not-ready") {
+        for (const entry of preparation.entries) print(entry);
+        return {
+          orders: [],
+          roundError:
+            preparation.entries[0] ??
+            errorEntry("not-ready", "The keeper could not start a round."),
+        };
       }
-      clients = connection.clients;
+      ready = preparation;
       print({
         orderId: undefined,
         action: Action.Start,
         reason: "connected",
         details: [
           ["mode", mode],
-          ["chain-id", connection.chainId.toString()],
-          ["contract", config.contractAddress],
-          ["executor", config.account.address],
+          ["chain-id", ready.chainId.toString()],
+          ["contract", ready.config.contractAddress],
+          ["executor", ready.config.account.address],
         ],
       });
     }
+    const { config, abis, clients } = ready;
     return runOnce({
       clients,
       settings: {
@@ -219,7 +254,7 @@ async function main(): Promise<number> {
   }
   await keepRunning({
     runRound,
-    intervalMs: config.intervalSeconds * 1000,
+    intervalMs: result.intervalSeconds * 1000,
     wait: (ms) => sleep(ms),
     log: print,
   });

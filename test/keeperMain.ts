@@ -206,6 +206,30 @@ describe("keeper entry point: missing and invalid settings", () => {
   });
 });
 
+describe("keeper entry point: keep-running mode with a setting missing", () => {
+  it("logs the missing variable every round and keeps running instead of exiting; the output holds neither the private key nor the URL key", async () => {
+    const privateKey = generatePrivateKey();
+    const { url, urlKey } = await unreachableUrl();
+    const env: Record<string, string> = {
+      ...variables(url, privateKey, emptyAddress()),
+      [ENV.intervalSeconds]: "1",
+    };
+    delete env[ENV.fromBlock];
+    const pattern = new RegExp(
+      ` action=error reason=config-missing variable=${ENV.fromBlock} `,
+      "g",
+    );
+    const reports = (output: string) => output.match(pattern)?.length ?? 0;
+
+    const run = await runKeeper([], env, (output) => reports(output) >= 2);
+
+    assert.equal(run.timedOut, false, run.output);
+    assert.equal(run.stoppedByTest, true, run.output);
+    assert.equal(run.exitCode, null);
+    assertHoldsNone(run.output, [privateKey, url, urlKey]);
+  });
+});
+
 describe("keeper entry point: a node that cannot be reached", () => {
   it("in --once mode exits with 1 within the time limit and says it could not reach the node; the output holds neither the URL key nor the private key", async () => {
     const privateKey = generatePrivateKey();
