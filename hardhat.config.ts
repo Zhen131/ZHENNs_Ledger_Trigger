@@ -1,5 +1,7 @@
 import hardhatToolboxViemPlugin from "@nomicfoundation/hardhat-toolbox-viem";
-import { configVariable, defineConfig } from "hardhat/config";
+import { configVariable, defineConfig, overrideTask } from "hardhat/config";
+
+import { guardTestRun } from "./scripts/testNetworkGuard.ts";
 
 export default defineConfig({
   plugins: [hardhatToolboxViemPlugin],
@@ -22,4 +24,10 @@ export default defineConfig({
       accounts: [configVariable("TRIGGER_SEPOLIA_PRIVATE_KEY")],
     },
   },
+  tasks: [
+    // The tests send transactions on the selected network. This runs them on
+    // Hardhat's local chain only: on any other chain the whole run stops
+    // before anything is built, run or sent (see scripts/testNetworkGuard.ts).
+    overrideTask(["test", "nodejs"]).setInlineAction(guardTestRun).build(),
+  ],
 });
