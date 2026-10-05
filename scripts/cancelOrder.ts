@@ -8,7 +8,7 @@ import { parseWhole } from "./amounts.ts";
 import { mined } from "./mined.ts";
 import { orderStatusName } from "../keeper/names.ts";
 import { ScriptError } from "./scriptError.ts";
-import { GatedScript, passSendGate } from "./sendGate.ts";
+import { GatedScript, openSendGate } from "./sendGate.ts";
 import {
   VARIABLES,
   requireAddress,
@@ -54,7 +54,7 @@ export async function cancelOrder(input: {
     viem,
     settings.contract,
   );
-  await passSendGate(publicClient, GatedScript.CancelOrder, input.confirmation);
+  await openSendGate(publicClient, GatedScript.CancelOrder, input.confirmation);
   const [owner] = walletClients;
   if (owner === undefined) {
     throw new ScriptError("The network has no account to cancel from.");

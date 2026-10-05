@@ -26,7 +26,7 @@ import { erc20Abi, type Address } from "viem";
 import { formatDecimal, parseDecimal, parseWhole } from "./amounts.ts";
 import { scriptClients } from "./clients.ts";
 import { ScriptError } from "./scriptError.ts";
-import { GatedScript, passSendGate } from "./sendGate.ts";
+import { GatedScript, openSendGate } from "./sendGate.ts";
 import {
   VARIABLES,
   readText,
@@ -318,7 +318,7 @@ export async function deployWithMocks(input: {
 }): Promise<DeploymentReport> {
   const { viem, settings, mocks } = input;
   const { publicClient, walletClients, client } = await scriptClients(viem);
-  const chainId = await passSendGate(
+  const chainId = await openSendGate(
     publicClient,
     GatedScript.DeployMocks,
     input.confirmation,
@@ -410,7 +410,7 @@ export async function deployWithExternalParts(input: {
 }): Promise<{ readonly check: PartsCheck; readonly report: DeploymentReport }> {
   const { viem, settings } = input;
   const { publicClient, walletClients } = await scriptClients(viem);
-  const chainId = await passSendGate(
+  const chainId = await openSendGate(
     publicClient,
     GatedScript.Deploy,
     input.confirmation,

@@ -8,7 +8,7 @@ import type { Address } from "viem";
 
 import { formatDecimal, parseDecimal } from "./amounts.ts";
 import { mined } from "./mined.ts";
-import { GatedScript, passSendGate } from "./sendGate.ts";
+import { GatedScript, openSendGate } from "./sendGate.ts";
 import {
   VARIABLES,
   requireAddress,
@@ -52,7 +52,7 @@ export async function setMockPrice(input: {
     viem,
     settings.contract,
   );
-  await passSendGate(publicClient, GatedScript.SetPrice, input.confirmation);
+  await openSendGate(publicClient, GatedScript.SetPrice, input.confirmation);
   const feed = await viem.getContractAt(
     "MockPriceFeed",
     await trigger.read.priceFeed(),

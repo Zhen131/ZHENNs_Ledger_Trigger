@@ -33,7 +33,7 @@ import {
 } from "./deploy.ts";
 import { mined } from "./mined.ts";
 import { ScriptError, revertName } from "./scriptError.ts";
-import { GatedScript, passSendGate } from "./sendGate.ts";
+import { GatedScript, openSendGate } from "./sendGate.ts";
 
 type Viem = NetworkConnection["viem"];
 
@@ -166,7 +166,7 @@ export async function runDemo(input: {
 }): Promise<DemoResult> {
   const { viem } = input;
   const { publicClient, walletClients, client } = await scriptClients(viem);
-  const chainId = await passSendGate(
+  const chainId = await openSendGate(
     publicClient,
     GatedScript.Demo,
     input.confirmation,

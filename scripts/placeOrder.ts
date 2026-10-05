@@ -21,7 +21,7 @@ import { erc20Abi, parseEventLogs, type Address } from "viem";
 import { parseDecimal, parseWhole } from "./amounts.ts";
 import { mined } from "./mined.ts";
 import { ScriptError } from "./scriptError.ts";
-import { GatedScript, passSendGate } from "./sendGate.ts";
+import { GatedScript, openSendGate } from "./sendGate.ts";
 import {
   VARIABLES,
   requireAddress,
@@ -89,7 +89,7 @@ export async function placeOrder(input: {
   const { viem, settings } = input;
   const { publicClient, walletClients, trigger, usdcDecimals, priceDecimals } =
     await triggerAt(viem, settings.contract);
-  await passSendGate(publicClient, GatedScript.PlaceOrder, input.confirmation);
+  await openSendGate(publicClient, GatedScript.PlaceOrder, input.confirmation);
   const [owner] = walletClients;
   if (owner === undefined) {
     throw new ScriptError(

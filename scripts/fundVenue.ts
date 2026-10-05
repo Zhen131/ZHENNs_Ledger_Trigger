@@ -11,7 +11,7 @@ import type { Address } from "viem";
 import { parseDecimal } from "./amounts.ts";
 import { mined } from "./mined.ts";
 import { ScriptError } from "./scriptError.ts";
-import { GatedScript, passSendGate } from "./sendGate.ts";
+import { GatedScript, openSendGate } from "./sendGate.ts";
 import {
   VARIABLES,
   requireAddress,
@@ -59,7 +59,7 @@ export async function fundVenue(input: {
     viem,
     settings.contract,
   );
-  await passSendGate(publicClient, GatedScript.FundVenue, input.confirmation);
+  await openSendGate(publicClient, GatedScript.FundVenue, input.confirmation);
   const [sender] = walletClients;
   if (sender === undefined) {
     throw new ScriptError("The network has no account to send ETH from.");
