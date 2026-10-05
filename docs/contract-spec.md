@@ -56,3 +56,98 @@ Every rejection is a named error, listed here in the order the function checks. 
 | `constructor`                               | `ZeroUsdc`; `ZeroPriceFeed`; `ZeroSwapVenue`; `ZeroMaxOrderAmount`; `ZeroMaxOpenOrdersPerOwner`; `ZeroMaxPriceAge`; `SlippageTooHigh(maxSlippageBps)` when the slippage is 100 % or more. It also reverts when the token or the price feed does not report its decimals                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 A price exactly `maxPriceAge` seconds old still counts, a price equal to the target price can fill, and an order can still be filled in the very second of its expiry.
+
+## 3. Data structures
+
+### Deployment parameters
+
+Seven values are given at deployment and stored as immutables: nothing can change them afterwards. The defaults below are the values the deployment scripts use; each can be set to another value at deployment (see the README).
+
+| Name                    | Meaning                                                        | Default                                                                                                                                                                     |
+| ----------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `usdc`                  | The USDC token that orders spend                               | Locally, `MockUSDC`, a test token the scripts deploy; on the Sepolia test network, Circle's official test USDC                                                              |
+| `priceFeed`             | The price feed for ETH in USD                                  | Locally, `MockPriceFeed`; on Sepolia, Chainlink's ETH / USD feed                                                                                                            |
+| `swapVenue`             | The swap venue that turns USDC into ETH                        | `MockSwapVenue`, on Sepolia as well: real swap venues on that test network quote ETH at prices more than ten times away from the market price, so they cannot be used       |
+| `maxOrderAmount`        | The largest amount of one order                                | 500 USDC                                                                                                                                                                    |
+| `maxOpenOrdersPerOwner` | How many open orders one owner may have at the same time       | 5                                                                                                                                                                           |
+| `maxPriceAge`           | How old, in seconds, a price may be and still count            | 4500 seconds (75 minutes): the Sepolia ETH / USD feed updates at least once an hour, and the extra 15 minutes keep a price from being refused just before its hourly update |
+| `maxSlippageBps`        | The allowed slippage, in basis points (100 basis points = 1 %) | 100, that is 1 %                                                                                                                                                            |
+
+At deployment the contract also reads the decimals of the token and of the price feed and stores them as `usdcDecimals` and `priceDecimals`, so no decimals are written into the code.
+
+### The order: `struct Order`
+
+| Field         | Meaning                                                                                                                 |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `owner`       | The account that placed the order                                                                                       |
+| `executor`    | The one address besides the owner that may fill it                                                                      |
+| `recipient`   | Where the ETH goes                                                                                                      |
+| `usdcAmount`  | How much USDC to spend, in its smallest unit (6 decimals)                                                               |
+| `targetPrice` | The highest ETH price in USD the owner accepts, written like the feed's price (8 decimals for 1500 USD: `150000000000`) |
+| `createdAt`   | The time of the block that placed the order                                                                             |
+| `expiry`      | The last second, in Unix time, at which the order can be filled; one second later it has expired                        |
+| `status`      | The stored status: `Open`, `Filled` or `Cancelled`, never `Expired`                                                     |
+
+After an order is placed, its owner, executor and recipient never change.
+
+### Other structs
+
+- `OpenOrders`: for one owner, the number of open orders (`count`) and their USDC amounts added up (`total`).
+- `FillCheck` (private): what the fill checks found for one order, used inside the contract so that `canFill` and `fillOrder` run one and the same set of checks.
+
+### Mappings
+
+- `orders`: order ID to `Order`. IDs start at 1 and go up by one; an ID is never used twice, and an order is never deleted. Read it with `getOrder`.
+- `openOrdersOf`: owner address to `OpenOrders`. An order counts there while its stored status is `Open`, expired or not. Read it with `openOrderCount` and `openOrderTotal`.
+
+### Enums
+
+`OrderStatus`, where an order stands:
+
+| Value       | Meaning                                                                                   |
+| ----------- | ----------------------------------------------------------------------------------------- |
+| `None`      | No order has this ID. Never returned: the read functions reject such an ID instead        |
+| `Open`      | Placed, and not yet filled or cancelled                                                   |
+| `Filled`    | Filled. Final                                                                             |
+| `Cancelled` | Cancelled by its owner. Final                                                             |
+| `Expired`   | Never stored. `statusOf` returns it for an order stored as `Open` whose expiry has passed |
+
+`FillBlocker`, why an order cannot be filled right now, as `canFill` reports it. When several apply, the first in this list is reported.
+
+| Value                   | Meaning                                                                                 |
+| ----------------------- | --------------------------------------------------------------------------------------- |
+| `None`                  | Nothing stops the fill                                                                  |
+| `NotOpen`               | The order is `Filled` or `Cancelled`                                                    |
+| `Expired`               | Its expiry has passed                                                                   |
+| `InvalidPrice`          | The feed's price is zero or below, or its update time is after the current block's time |
+| `StalePrice`            | The price is older than `maxPriceAge`                                                   |
+| `PriceAboveTarget`      | The price is above the order's target price                                             |
+| `InsufficientAllowance` | The owner's USDC allowance to the contract is below the order amount                    |
+| `InsufficientBalance`   | The owner's USDC balance is below the order amount                                      |
+
+### Events
+
+One event for each change of state, kept on the chain for good.
+
+| Event            | Fields                                                                                                                                                                  |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OrderCreated`   | `orderId`, `owner`, `executor`, `recipient`, `usdcAmount`, `targetPrice`, `expiry`                                                                                      |
+| `OrderFilled`    | `orderId`, `owner`, `filledBy` (the owner or the executor), `recipient`, `usdcAmount`, `ethReceived` (the ETH the recipient got, in wei), `price` (the feed price used) |
+| `OrderCancelled` | `orderId`, `owner`, `afterExpiry` (whether the order had already expired)                                                                                               |
+
+In `OrderCreated`, `orderId`, `owner` and `executor` are indexed, so they can be searched by value. The contract keeps no list of the orders that name an executor; the keeper finds its orders by searching `OrderCreated` for its own address as executor. In `OrderFilled`, `orderId`, `owner` and `filledBy` are indexed; in `OrderCancelled`, all three fields are.
+
+### Modifiers
+
+| Modifier                   | Rejects                                                                                                            |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `orderExists`              | An ID that no order has (`OrderNotFound`)                                                                          |
+| `onlyOrderOwner`           | Any caller but the order's owner (`NotOrderOwner`)                                                                 |
+| `onlyOrderOwnerOrExecutor` | Any caller but the order's owner and its executor (`NotOrderOwnerOrExecutor`)                                      |
+| `onlyOpen`                 | An order whose stored status is not `Open` (`OrderNotOpen`); an expired order is still stored as `Open` and passes |
+
+`fillOrder` also carries OpenZeppelin's reentrancy guard (`nonReentrant`), placed first. It checks the order's status as part of the fill checks, which it shares with `canFill`, rather than with `onlyOpen`.
+
+### Errors
+
+Every reason to reject has its own named error, never a sentence in a string, so the tests and the keeper can tell the reasons apart. Many errors carry the values that caused them: `PriceAboveTarget` the price and the target, `InsufficientAllowance` the allowance there is and the allowance needed. The table under "When each function rejects" lists them all. Two errors in the contract's interface come from OpenZeppelin: `ReentrancyGuardReentrantCall` and `SafeERC20FailedOperation` (a USDC call that failed without an error of its own, or returned false).
