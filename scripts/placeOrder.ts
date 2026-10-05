@@ -6,10 +6,14 @@
 // reports for its token and its price feed. The expiry is written as a number
 // of minutes from now, where "now" is the time of the latest block.
 //
-// Before placing the order it sets the owner's USDC allowance to LedgerTrigger
-// to what the owner's open orders will add up to once this one is placed:
-// `openOrderTotal` after the order, which is exactly the allowance the owner's
-// open orders need. Then it places the order and reads it back.
+// It first simulates placing the order, sending nothing: an order the
+// contract would reject (above the largest order, one open order too many, an
+// expiry already past) stops the script before any transaction, so no
+// allowance is left behind for an order that was never placed. Then it sets
+// the owner's USDC allowance to LedgerTrigger to what the owner's open orders
+// will add up to once this one is placed: `openOrderTotal` after the order,
+// which is exactly the allowance the owner's open orders need. Then it places
+// the order and reads it back.
 
 import type { NetworkConnection } from "hardhat/types/network";
 import { erc20Abi, parseEventLogs, type Address } from "viem";
@@ -107,6 +111,17 @@ export async function placeOrder(input: {
   const ownerAddress = owner.account.address;
   const usdc = await trigger.read.usdc();
 
+  const orderArguments = [
+    usdcAmount,
+    targetPrice,
+    settings.recipient,
+    settings.executor,
+    expiry,
+  ] as const;
+  await trigger.simulate.createOrder(orderArguments, {
+    account: ownerAddress,
+  });
+
   const allowance =
     (await trigger.read.openOrderTotal([ownerAddress])) + usdcAmount;
   const approval = await owner.writeContract({
@@ -117,10 +132,9 @@ export async function placeOrder(input: {
   });
   await mined(publicClient, approval);
 
-  const placing = await trigger.write.createOrder(
-    [usdcAmount, targetPrice, settings.recipient, settings.executor, expiry],
-    { account: owner.account },
-  );
+  const placing = await trigger.write.createOrder(orderArguments, {
+    account: owner.account,
+  });
   const receipt = await mined(publicClient, placing);
   const [created] = parseEventLogs({
     abi: trigger.abi,
