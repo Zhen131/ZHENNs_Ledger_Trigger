@@ -23,10 +23,12 @@ import {ISwapVenue} from "./interfaces/ISwapVenue.sol";
 /// through. USDC sent straight to this contract cannot be refused, and stays here for good, as
 /// nothing can take it out.
 /// Two errors in its interface come from OpenZeppelin: `ReentrancyGuardReentrantCall` (a call to
-/// `fillOrder` made while a fill is running) and `SafeERC20FailedOperation` (a USDC transfer or
-/// approval that did not revert but returned something other than true, such as false, or a USDC
-/// address with no code). A USDC call that reverts is not turned into that error: its own revert
-/// data is passed on unchanged, even when it is empty.
+/// `fillOrder` made while a fill is running) and `SafeERC20FailedOperation` (a USDC transfer that
+/// returned something other than true, such as false, instead of reverting, or an approval of the
+/// swap venue that returned false when tried again; see `fillOrder`). A USDC call that reverts is
+/// not turned into that error: its own revert data is passed on unchanged, even when it is empty.
+/// The one exception is the first try of each approval of the swap venue: if it reverts, it is
+/// tried again (see `fillOrder`).
 contract LedgerTrigger is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
