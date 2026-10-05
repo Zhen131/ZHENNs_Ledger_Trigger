@@ -151,3 +151,105 @@ In `OrderCreated`, `orderId`, `owner` and `executor` are indexed, so they can be
 ### Errors
 
 Every reason to reject has its own named error, never a sentence in a string, so the tests and the keeper can tell the reasons apart. Many errors carry the values that caused them: `PriceAboveTarget` the price and the target, `InsufficientAllowance` the allowance there is and the allowance needed. The table under "When each function rejects" lists them all. Two errors in the contract's interface come from OpenZeppelin: `ReentrancyGuardReentrantCall` and `SafeERC20FailedOperation` (a USDC call that failed without an error of its own, or returned false).
+
+## 4. Security rules
+
+The rules fall into six groups.
+
+**1. Access control**
+
+- Only the owner can cancel an order. The executor cannot either.
+- Only the owner or the order's executor can fill it.
+- There is no admin, no pause, no upgrade and no function that changes a parameter. All deployment parameters are immutable.
+
+**2. State transitions**
+
+- Only an `Open` order can become `Filled` or `Cancelled`. Both are final: an order never leaves them, and never goes from one to the other.
+- An order whose expiry has passed cannot be filled. The only thing still possible is for its owner to cancel it.
+- Order IDs are never reused, and a cancelled order never comes back.
+
+**3. Payment safety**
+
+- A fill always runs in this order: check, then mark the order `Filled`, and only then move money: take the USDC, swap it, send the ETH. A reentrancy guard comes on top.
+- USDC is taken only from the order's owner, only the order amount, and only once per order.
+- The swap venue's address is fixed at deployment. `fillOrder` takes no address and no instruction from its caller.
+- If the swap brings in less ETH than the minimum output, the whole fill is rejected (Appendix A).
+- After the swap, the swap venue's allowance is set back to zero.
+- If the swap venue does not take exactly the order amount, or the ETH cannot be sent to the recipient, the whole fill is rejected: the order stays `Open` and the owner's USDC does not move.
+
+**4. Input validation**
+
+When an order is placed, any of these checks that fails rejects it:
+
+- The amount is above zero and not above `maxOrderAmount`.
+- The target price is above zero.
+- Neither the recipient nor the executor is the zero address. The executor may be the owner.
+- The expiry is in the future.
+- The caller has fewer open orders than `maxOpenOrdersPerOwner`.
+
+At deployment: none of the three addresses is the zero address; `maxOrderAmount`, `maxOpenOrdersPerOwner` and `maxPriceAge` are above zero; `maxSlippageBps` is below 100 % (10000 basis points), and may be zero.
+
+**5. Auditability**
+
+- Orders are never deleted. At any time, any order can be looked up by its ID, with all its fields and how it ended.
+- Placing, filling and cancelling each emit an event. The fill event records the feed price used and the ETH actually received, so anyone can check afterwards that the price paid was not above the target.
+- The cancel event records whether the order had already expired.
+
+**6. Consistent ownership**
+
+- The contract always knows each order's owner, executor and recipient, and none of the three can change after the order is placed.
+- For every address, the open-order count and total always equal the number and the USDC sum of its orders whose stored status is `Open`.
+- The contract keeps no money: its USDC and ETH balances are the same before and after every fill.
+
+## 5. State machine
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Open: createOrder by anyone, who becomes the owner
+    Open --> Filled: fillOrder by the owner or the executor, price at or below the target, not expired, USDC covered
+    Open --> Cancelled: cancelOrder by the owner only
+    Open --> Expired: expiry passed, worked out from the time and never stored
+    Expired --> Cancelled: cancelOrder by the owner only, which frees the slot
+    Filled --> [*]
+    Cancelled --> [*]
+```
+
+- Final states: `Filled` and `Cancelled`. An order can never be both filled and cancelled.
+- `Expired` is not a stored state. In storage an expired order is still `Open`, so **it still takes one of its owner's open-order slots until the owner cancels it**. It can no longer be filled.
+- When a fill and a cancel of the same order are sent at the same time, whichever the chain includes first takes effect, and the other is rejected.
+
+## 6. Test scenarios
+
+Expected results are written in four forms: a status change (`Open -> Filled`), "transaction must revert", "second call must revert", and "explicit error". Each scenario has an ID, S01 to S26; [test-matrix.md](test-matrix.md) lists the tests for each.
+
+| ID  | Scenario                          | How                                                                                                                                            | Expected result                                                                                   |
+| --- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| S01 | Normal fill                       | Place an order; the price falls to the target; the executor fills it                                                                           | `Open -> Filled`; the ETH goes to the recipient, not to the caller                                |
+| S02 | The owner fills                   | As S01, but the owner fills it                                                                                                                 | `Open -> Filled`                                                                                  |
+| S03 | Cancel                            | Place an order; the owner cancels it                                                                                                           | `Open -> Cancelled`                                                                               |
+| S04 | A stranger fills                  | An account that is neither the owner nor the executor fills                                                                                    | Transaction must revert                                                                           |
+| S05 | Someone else cancels              | A stranger cancels; the executor cancels                                                                                                       | Transaction must revert                                                                           |
+| S06 | Price not reached                 | Fill while the price is above the target                                                                                                       | Transaction must revert; the order stays `Open`                                                   |
+| S07 | Filled twice                      | Fill the same order twice                                                                                                                      | Second call must revert                                                                           |
+| S08 | Fill after cancel                 | Cancel an order, then fill it                                                                                                                  | Transaction must revert                                                                           |
+| S09 | Cancel after fill                 | Fill an order, then cancel it                                                                                                                  | Transaction must revert                                                                           |
+| S10 | Fill after expiry                 | Move the time past the expiry, then fill                                                                                                       | Transaction must revert; `statusOf` returns `Expired`                                             |
+| S11 | Expiry boundary                   | Fill in the very second of the expiry; fill one second later                                                                                   | The first fills; the second must revert                                                           |
+| S12 | Cancel after expiry               | The owner cancels an expired order                                                                                                             | It becomes `Cancelled`; one open-order slot is freed                                              |
+| S13 | Price too old                     | The feed's last update is older than `maxPriceAge`                                                                                             | Transaction must revert                                                                           |
+| S14 | Bad price                         | The feed reports zero or a negative price                                                                                                      | Transaction must revert                                                                           |
+| S15 | Allowance too small               | The owner's allowance is below the order amount                                                                                                | Transaction must revert; the order stays `Open`; once the allowance is topped up, the order fills |
+| S16 | Balance too small                 | The owner holds less USDC than the order amount                                                                                                | Transaction must revert; the order stays `Open`                                                   |
+| S17 | Balance larger than the order     | The owner holds more USDC than the order amount, and the order fills                                                                           | Only the order amount is taken; the rest does not move                                            |
+| S18 | A sixth order                     | Five orders are open; place one more                                                                                                           | Transaction must revert; once one is cancelled, a new one can be placed                           |
+| S19 | Two orders, allowance for one     | Two orders, and an allowance that covers one of them                                                                                           | The first fills; the second is rejected (allowance too small); once topped up, it fills           |
+| S20 | Bad input when placing            | Amount zero; amount above the single-order limit; target price zero; recipient the zero address; executor the zero address; expiry in the past | Each one must revert                                                                              |
+| S21 | Too little ETH from the swap      | The swap venue gives less than the minimum output                                                                                              | Transaction must revert; the owner's USDC does not move                                           |
+| S22 | Reentrancy                        | The recipient is a hostile contract that calls `fillOrder` again when it receives the ETH                                                      | The same order is never filled twice                                                              |
+| S23 | Recipient cannot take ETH         | The recipient is a contract that refuses ETH                                                                                                   | Transaction must revert; the order stays `Open`; the USDC does not move                           |
+| S24 | Unknown order                     | Look up an ID that no order has                                                                                                                | Explicit error (`OrderNotFound`)                                                                  |
+| S25 | The contract keeps no money       | Any fill                                                                                                                                       | The contract's USDC and ETH balances after the fill equal those before it                         |
+| S26 | ETH sent straight to the contract | Someone other than the swap venue sends ETH to the contract                                                                                    | Transaction must revert                                                                           |
+
+The demo (`npm run demo`) plays six of these on a fresh local chain: S01 and S03, which must succeed, and S04, S06, S07 and S15, which must be rejected. It shows the correct flows and that incorrect ones are refused.
