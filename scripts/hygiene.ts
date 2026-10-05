@@ -12,17 +12,23 @@
 // A scanned file whose name, or the name of a folder on its path, starts with
 // ".env" is flagged whatever it contains: environment files hold keys. The
 // .gitignore file keeps such files out of git, and so out of this scan, as
-// long as nobody adds one by force.
+// long as nobody adds one by force. Such a file is flagged in the commit
+// history too: every file in the tree of every commit reachable from HEAD is
+// checked, so one that was committed and later deleted is still found, at the
+// oldest commit that holds it.
 //
 // Exit code: 0 when nothing is found, 1 when there are findings (each one is
 // printed), 2 when the scan itself could not run, including when the commit
 // history cannot be read back reliably (no commit is ever skipped silently).
 //
-// A file that contains a zero byte is read as binary. Its contents are checked
-// by every content rule except two: Chinese characters and the two-letter tool
-// acronym, because random bytes produce both by chance far too often. Its file
-// name is checked by every rule. The summary line says how many files were
-// read as binary.
+// A file that contains a zero byte counts as binary; the summary line says how
+// many did. If nearly all of it still reads as text (see `readsAsText`), as
+// with a text file that holds a stray zero byte, its contents are checked like
+// any text file, by every rule. Otherwise its bytes are read one by one, so
+// the ASCII patterns still match, and every content rule applies except two:
+// Chinese characters, which bytes read one by one never form, and the
+// two-letter tool acronym, which random bytes spell by chance far too often.
+// Its file name is checked by every rule.
 //
 // Several words this scan looks for would make it flag itself if they were
 // written out in one piece here. They are split with a one-letter character
@@ -63,8 +69,9 @@ type PatternRule = {
   /** When true, the matched text is not echoed in the report. */
   readonly secret: boolean;
   /**
-   * When true, the rule does not apply to the contents of binary files,
-   * because random bytes match it by chance too often.
+   * When true, the rule is not run on a binary file whose bytes are read one
+   * by one: either it cannot match such text at all, or random bytes match it
+   * by chance too often.
    */
   readonly skipInBinary?: boolean;
 };
@@ -531,6 +538,32 @@ function listFiles(root: string): string[] {
 
 type FileScan = { readonly findings: Finding[]; readonly binary: boolean };
 
+/** Share of a file's characters that must be text for it to count as text. */
+export const TEXT_SHARE = 0.95;
+
+/**
+ * True when nearly all of `bytes` reads as text: decoded as UTF-8, at least
+ * TEXT_SHARE of the characters other than the zero character are printable
+ * or ordinary white space, not control characters and not bytes that are not
+ * UTF-8. Zero characters are left out of the count, so a text file with zero
+ * bytes in it reads as text, however many there are. Random bytes come
+ * nowhere near the share.
+ */
+export function readsAsText(bytes: Uint8Array): boolean {
+  let counted = 0;
+  let text = 0;
+  for (const character of new TextDecoder("utf-8").decode(bytes)) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code === 0) continue;
+    counted += 1;
+    const control =
+      (code < 0x20 && !"\t\n\r\f\v".includes(character)) ||
+      (code >= 0x7f && code < 0xa0);
+    if (!control && code !== 0xfffd) text += 1;
+  }
+  return counted > 0 && text >= counted * TEXT_SHARE;
+}
+
 const ENV_FILE_RULE_ID = "file/env-file";
 
 /**
@@ -572,11 +605,14 @@ function scanFile(root: string, relativePath: string): FileScan {
 
   const bytes = readFileSync(absolute);
   const binary = bytes.includes(0);
-  // Binary files are read byte by byte so the ASCII patterns match. Random
-  // bytes decode into Chinese characters and spell the two-letter tool
-  // acronym far too often, so those two rules are left out for them.
-  const text = bytes.toString(binary ? "latin1" : "utf8");
-  findings.push(...scanText(relativePath, text, { binary }));
+  // A binary file that is nearly all text is checked as text, by every rule.
+  // Any other binary file is read byte by byte, so the ASCII patterns match;
+  // read that way it holds no Chinese character at all, and random bytes
+  // spell the two-letter tool acronym far too often, so those two rules are
+  // left out for it.
+  const byteByByte = binary && !readsAsText(bytes);
+  const text = bytes.toString(byteByByte ? "latin1" : "utf8");
+  findings.push(...scanText(relativePath, text, { binary: byteByByte }));
   if (relativePath.endsWith(".sol")) {
     findings.push(...scanSolidity(relativePath, text));
   }
@@ -660,6 +696,39 @@ function listCommits(root: string): CommitRecord[] {
   return parseCommitLog(output, expectedCount);
 }
 
+const ENV_HISTORY_RULE_ID = "history/env-file";
+
+/**
+ * A finding for every path starting with ".env" (in any of its parts) that a
+ * commit's tree holds, each path once, at the oldest of `commits` that holds
+ * it. `commits` are newest first, as `listCommits` gives them.
+ */
+function scanEnvFileHistory(
+  root: string,
+  commits: readonly CommitRecord[],
+): Finding[] {
+  const oldest = new Map<string, string>();
+  for (const commit of commits) {
+    const paths = git(root, [
+      "ls-tree",
+      "-r",
+      "-z",
+      "--name-only",
+      "--full-tree",
+      commit.hash,
+    ]).split("\0");
+    for (const file of paths) {
+      if (file !== "" && isEnvFilePath(file)) oldest.set(file, commit.hash);
+    }
+  }
+  return [...oldest].map(([file, hash]) => ({
+    where: `commit ${hash.slice(0, 12)}`,
+    line: undefined,
+    rule: ENV_HISTORY_RULE_ID,
+    detail: `committed file "${file}" has a name starting with .env (environment files hold keys); it stays in the history even after it is deleted`,
+  }));
+}
+
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const EXPECTED_IDENTITY = `${EXPECTED_AUTHOR_NAME} <${EXPECTED_AUTHOR_EMAIL}>`;
 
@@ -712,6 +781,7 @@ export function scanRepository(directory: string): ScanResult {
   const findings = [
     ...fileScans.flatMap((scan) => scan.findings),
     ...commits.flatMap((commit) => scanCommit(commit)),
+    ...scanEnvFileHistory(root, commits),
   ];
   return {
     root,
