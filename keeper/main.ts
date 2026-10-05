@@ -7,14 +7,16 @@
 // The settings come from environment variables only (see config.ts and the
 // README). Build the contracts first: the ABIs are read from the build output.
 //
-// Start-up: read the settings; read the ABIs; ask the node for its chain ID
-// (nothing is assumed about which chain it is); check that the contract
-// address holds code. Then run rounds.
+// Start-up: read the settings and the ABIs; a problem with either ends the
+// keeper, since no later round could fix it. Then connect: ask the node for
+// its chain ID (nothing is assumed about which chain it is) and check that the
+// contract address holds code. The first round connects; if that fails, the
+// round counts as an error, and in keep-running mode the next round tries to
+// connect again. Once connected, rounds run as described in runOnce.ts.
 //
-// Exit codes: 0 when everything went through or was skipped; 1 on an error
-// (bad settings, missing build output, a node that cannot be reached or that
-// reports an error, no contract code at the address, or, in --once mode, an
-// error in the round); 2 on an unknown command-line argument.
+// Exit codes: 0 when everything went through or was skipped; 1 on bad
+// settings or missing build output, or, in --once mode, on any error in the
+// round, connecting included; 2 on an unknown command-line argument.
 //
 // The private key and the node URL are never printed: every line comes from
 // `formatLogLine`, and errors are logged as this project's own sentence and
@@ -29,13 +31,9 @@ import {
   http,
 } from "viem";
 
-import { BuildOutputError, loadAbis } from "./abi.ts";
-import {
-  FailureKind,
-  classifyFailure,
-  type Classification,
-} from "./classify.ts";
-import { readConfig } from "./config.ts";
+import { BuildOutputError, loadAbis, type KeeperAbis } from "./abi.ts";
+import { FailureKind, classifyFailure } from "./classify.ts";
+import { readConfig, type KeeperConfig } from "./config.ts";
 import { keepRunning } from "./keepRunning.ts";
 import {
   Action,
@@ -44,7 +42,12 @@ import {
   internalErrorEntry,
   type LogEntry,
 } from "./log.ts";
-import { roundHasError, runOnce } from "./runOnce.ts";
+import {
+  roundHasError,
+  runOnce,
+  type KeeperClients,
+  type RoundReport,
+} from "./runOnce.ts";
 
 const Mode = {
   Once: "once",
@@ -58,20 +61,13 @@ function print(entry: LogEntry): void {
   console.log(formatLogLine(entry, new Date()));
 }
 
-function printError(reason: string, message: string): void {
-  print({
+function errorEntry(reason: string, message: string): LogEntry {
+  return {
     orderId: undefined,
     action: Action.Error,
     reason,
     details: [["message", message]],
-  });
-}
-
-function printFailure(step: string, classification: Classification): void {
-  print({
-    ...failureEntry(undefined, step, classification),
-    action: Action.Error,
-  });
+  };
 }
 
 function readMode(args: readonly string[]): Mode | undefined {
@@ -80,10 +76,75 @@ function readMode(args: readonly string[]): Mode | undefined {
   return undefined;
 }
 
+type Connection =
+  | {
+      readonly kind: "connected";
+      readonly clients: KeeperClients;
+      readonly chainId: number;
+    }
+  | { readonly kind: "failed"; readonly entry: LogEntry };
+
+/** Asks the node for its chain ID and checks the contract address holds code. */
+async function connect(
+  config: KeeperConfig,
+  abis: KeeperAbis,
+): Promise<Connection> {
+  const failed = (error: unknown): Connection => ({
+    kind: "failed",
+    entry: {
+      ...failureEntry(
+        undefined,
+        "connect",
+        classifyFailure({ kind: FailureKind.Thrown, error }, abis.errors),
+      ),
+      action: Action.Error,
+    },
+  });
+  const transport = http(config.rpcUrl);
+  let chainId: number;
+  try {
+    chainId = await createPublicClient({ transport }).getChainId();
+  } catch (error) {
+    return failed(error);
+  }
+  const chain = defineChain({
+    id: chainId,
+    name: `Chain ${chainId}`,
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: { default: { http: [] } },
+  });
+  const publicClient = createPublicClient({ chain, transport });
+  let code;
+  try {
+    code = await publicClient.getCode({ address: config.contractAddress });
+  } catch (error) {
+    return failed(error);
+  }
+  if (code === undefined || code === "0x") {
+    return {
+      kind: "failed",
+      entry: errorEntry(
+        "no-contract-code",
+        "There is no contract code at KEEPER_CONTRACT_ADDRESS on this chain.",
+      ),
+    };
+  }
+  const walletClient = createWalletClient({
+    chain,
+    transport,
+    account: config.account,
+  });
+  return {
+    kind: "connected",
+    clients: { publicClient, walletClient },
+    chainId,
+  };
+}
+
 async function main(): Promise<number> {
   const mode = readMode(process.argv.slice(2));
   if (mode === undefined) {
-    printError("usage", USAGE);
+    print(errorEntry("usage", USAGE));
     return 2;
   }
 
@@ -104,72 +165,44 @@ async function main(): Promise<number> {
   }
   const { config } = result;
 
-  let abis;
+  let abis: KeeperAbis;
   try {
     abis = loadAbis();
   } catch (error) {
-    printError(
-      "build-output-missing",
-      error instanceof BuildOutputError
-        ? error.message
-        : "The build output could not be read.",
+    print(
+      errorEntry(
+        "build-output-missing",
+        error instanceof BuildOutputError
+          ? error.message
+          : "The build output could not be read.",
+      ),
     );
     return 1;
   }
-  const failure = (error: unknown) =>
-    classifyFailure({ kind: FailureKind.Thrown, error }, abis.errors);
 
-  const transport = http(config.rpcUrl);
-  let chainId: number;
-  try {
-    chainId = await createPublicClient({ transport }).getChainId();
-  } catch (error) {
-    printFailure("connect", failure(error));
-    return 1;
-  }
-  const chain = defineChain({
-    id: chainId,
-    name: `Chain ${chainId}`,
-    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-    rpcUrls: { default: { http: [] } },
-  });
-  const publicClient = createPublicClient({ chain, transport });
-  const walletClient = createWalletClient({
-    chain,
-    transport,
-    account: config.account,
-  });
-
-  try {
-    const code = await publicClient.getCode({
-      address: config.contractAddress,
-    });
-    if (code === undefined || code === "0x") {
-      printError(
-        "no-contract-code",
-        "There is no contract code at KEEPER_CONTRACT_ADDRESS on this chain.",
-      );
-      return 1;
+  let clients: KeeperClients | undefined;
+  const runRound = async (): Promise<RoundReport> => {
+    if (clients === undefined) {
+      const connection = await connect(config, abis);
+      if (connection.kind === "failed") {
+        print(connection.entry);
+        return { orders: [], roundError: connection.entry };
+      }
+      clients = connection.clients;
+      print({
+        orderId: undefined,
+        action: Action.Start,
+        reason: "connected",
+        details: [
+          ["mode", mode],
+          ["chain-id", connection.chainId.toString()],
+          ["contract", config.contractAddress],
+          ["executor", config.account.address],
+        ],
+      });
     }
-  } catch (error) {
-    printFailure("connect", failure(error));
-    return 1;
-  }
-
-  print({
-    orderId: undefined,
-    action: Action.Start,
-    reason: "connected",
-    details: [
-      ["mode", mode],
-      ["chain-id", chainId.toString()],
-      ["contract", config.contractAddress],
-      ["executor", config.account.address],
-    ],
-  });
-  const runRound = () =>
-    runOnce({
-      clients: { publicClient, walletClient },
+    return runOnce({
+      clients,
       settings: {
         contractAddress: config.contractAddress,
         fromBlock: config.fromBlock,
@@ -179,6 +212,7 @@ async function main(): Promise<number> {
       abis,
       log: print,
     });
+  };
 
   if (mode === Mode.Once) {
     return roundHasError(await runRound()) ? 1 : 0;

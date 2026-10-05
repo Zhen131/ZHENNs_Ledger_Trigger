@@ -30,12 +30,18 @@ type Run = {
   readonly output: string;
   readonly durationMs: number;
   readonly timedOut: boolean;
+  /** Set when the test stopped the process because `stopWhen` held. */
+  readonly stoppedByTest: boolean;
 };
 
-/** Starts the entry point with only PATH and `env` set, and waits for it. */
+/**
+ * Starts the entry point with only PATH and `env` set, and waits for it to
+ * end. When `stopWhen` holds for the output so far, the test stops it.
+ */
 function runKeeper(
   args: readonly string[],
   env: Readonly<Record<string, string>>,
+  stopWhen: (output: string) => boolean = () => false,
 ): Promise<Run> {
   return new Promise((resolve, reject) => {
     const started = performance.now();
@@ -45,8 +51,16 @@ function runKeeper(
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
-    child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
-    child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
+    let stoppedByTest = false;
+    const collect = (chunk: Buffer) => {
+      output += chunk.toString();
+      if (!stoppedByTest && stopWhen(output)) {
+        stoppedByTest = true;
+        child.kill("SIGTERM");
+      }
+    };
+    child.stdout.on("data", collect);
+    child.stderr.on("data", collect);
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -60,6 +74,7 @@ function runKeeper(
         output,
         durationMs: performance.now() - started,
         timedOut,
+        stoppedByTest,
       });
     });
   });
@@ -208,6 +223,29 @@ describe("keeper entry point: a node that cannot be reached", () => {
       run.output,
       / action=error reason=node-unreachable step=connect message="Could not reach the node\." /,
     );
+    assertHoldsNone(run.output, [privateKey, url, urlKey]);
+  });
+
+  it("in keep-running mode logs the error, waits and tries again instead of exiting; the output holds neither the URL key nor the private key", async () => {
+    const privateKey = generatePrivateKey();
+    const { url, urlKey } = await unreachableUrl();
+    const failures = (output: string) =>
+      output.match(/ action=error reason=node-unreachable step=connect /g)
+        ?.length ?? 0;
+
+    const run = await runKeeper(
+      [],
+      {
+        ...variables(url, privateKey, emptyAddress()),
+        [ENV.intervalSeconds]: "1",
+      },
+      (output) => failures(output) >= 2,
+    );
+
+    assert.equal(run.timedOut, false, run.output);
+    assert.equal(run.stoppedByTest, true, run.output);
+    assert.equal(run.exitCode, null);
+    assert.ok(failures(run.output) >= 2);
     assertHoldsNone(run.output, [privateKey, url, urlKey]);
   });
 });
