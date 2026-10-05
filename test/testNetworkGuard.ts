@@ -94,6 +94,18 @@ function configWithLocalhostAt(url: string): HardhatUserConfig {
   };
 }
 
+/**
+ * Arguments for a test run that must never start. The original test nodejs
+ * action rejects `grepExclude` before it runs anything, so if the guard were
+ * missing, the run would fail with that other error instead of running tests
+ * against the chain inside this test process.
+ */
+const RUN = {
+  testFiles: ["test/MockUSDC.ts"],
+  noCompile: true,
+  grepExclude: "nothing",
+};
+
 async function assertStopped(run: Promise<unknown>) {
   await assert.rejects(
     run,
@@ -124,11 +136,7 @@ describe("test network guard: the test task of this repository's configuration",
       { network: "localhost" },
     );
 
-    await assertStopped(
-      hre.tasks
-        .getTask(["test", "nodejs"])
-        .run({ testFiles: ["test/MockUSDC.ts"], noCompile: true }),
-    );
+    await assertStopped(hre.tasks.getTask(["test", "nodejs"]).run(RUN));
 
     assert.equal(await chain.blockNumber(), before);
   });
@@ -148,11 +156,7 @@ describe("test network guard: the test task of this repository's configuration",
       else process.env.HARDHAT_NETWORK = saved;
     }
 
-    await assertStopped(
-      hre.tasks
-        .getTask(["test", "nodejs"])
-        .run({ testFiles: ["test/MockUSDC.ts"], noCompile: true }),
-    );
+    await assertStopped(hre.tasks.getTask(["test", "nodejs"]).run(RUN));
 
     assert.equal(await chain.blockNumber(), before);
   });
@@ -165,7 +169,7 @@ describe("test network guard: the test task of this repository's configuration",
       { network: "localhost" },
     );
 
-    await assertStopped(hre.tasks.getTask("test").run({ noCompile: true }));
+    await assertStopped(hre.tasks.getTask("test").run(RUN));
 
     assert.equal(await chain.blockNumber(), before);
   });
