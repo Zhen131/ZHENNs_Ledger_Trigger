@@ -56,7 +56,9 @@ There are four secrets: the private keys of wallets A and B, and the node URL (i
     read -s "TRIGGER_SEPOLIA_PRIVATE_KEY?Wallet A private key: " && export TRIGGER_SEPOLIA_PRIVATE_KEY
     ```
 
-    They are gone when you close that terminal. If a variable of the same name is set, Hardhat uses it rather than the keystore.
+    This is the zsh way to write `read`, and zsh is the default shell on macOS; in bash it fails. Each line waits for you to paste the value and press Enter. The variables are gone when you close that terminal. If a variable of the same name is set, Hardhat uses it rather than the keystore.
+
+    In a terminal that holds these secrets, run only the commands in this guide. The tests refuse to run on any chain but Hardhat's local one, so `npx hardhat test --network sepolia` and `npm run check` stop without sending anything, but there is no reason to try them there.
 
 - For the keeper (it is a separate program and cannot read Hardhat's keystore): environment variables in its own terminal, set the same way (step 7).
 
@@ -216,7 +218,7 @@ Take these:
 3. The terminal output of `npm run place-order`, and the `createOrder` transaction on the block explorer.
 4. The terminal output of `npm run order-status` before the fill (`Open`) and after it (`Filled`).
 5. The keeper's terminal with the `filled` line and its transaction hash.
-6. That fill transaction on the block explorer: its `OrderFilled` event in the Logs tab, and the ETH sent to the recipient.
+6. That fill transaction on the block explorer: its Logs tab, and the ETH sent to the recipient. Until the contract's source is verified on the block explorer (a later step, not in this guide), the Logs tab shows the event as hexadecimal topics and data rather than by the name `OrderFilled`; that is expected.
 7. Optional: the terminal output of `npm run cancel-order`.
 
 A rejected call (for example a fill when the price is above the target) never reaches the chain: the node refuses it before it is sent. Its screenshot is the terminal line with the error name.
