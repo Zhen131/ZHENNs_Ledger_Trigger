@@ -180,9 +180,11 @@ The keeper fills the orders whose executor is wallet B, once they can be filled.
    export KEEPER_CONTRACT_ADDRESS=<LedgerTrigger address from step 3>
    export KEEPER_FROM_BLOCK=<the block number from step 3>
    export KEEPER_MAX_FEE_WEI=5000000000000000
+   export KEEPER_MAX_BLOCK_RANGE=10
    ```
 
    - `KEEPER_FROM_BLOCK`: the block LedgerTrigger was deployed in, as the deploy step printed. Earlier blocks cannot hold its orders.
+   - `KEEPER_MAX_BLOCK_RANGE`: how many blocks the keeper reads in one request. The default is 500, but many free node plans allow only 10 blocks per request. A new block comes about every 12 seconds, so by the time you get here more than 10 blocks have passed since the deployment. With a free plan, set 10 as above. On a paid plan you can leave it out.
    - `KEEPER_MAX_FEE_WEI`: the most the keeper may pay for one fill, in wei (1 ETH = 10^18 wei). A fill used about 150,000 to 165,000 gas on the local chain. `5000000000000000` is 0.005 ETH, enough up to a gas price of about 30 gwei. When a fill would cost more, the keeper does not send it and logs a line like `action=skip reason=fee-above-cap estimated-fee-wei=... cap-wei=...`. Then wait for cheaper gas, or raise the cap.
 
 4. Run one round, then exit:
@@ -199,13 +201,7 @@ The keeper fills the orders whose executor is wallet B, once they can be filled.
 
 You should see a `start` line with chain ID `11155111`, then a `round-start` line, then for your order either `action=skip reason=PriceAboveTarget` (it waits) or `action=filled reason=transaction-succeeded tx=0x...`. After a fill, `order-status` shows `Filled`, and the recipient's ETH balance has gone up.
 
-**If the keeper runs for a long time**, the blocks it reads grow. Many node services limit how many blocks one event request may cover; some free plans allow only 10. If the keeper logs `action=error reason=node-error step=find-orders`, set a smaller span and start it again:
-
-```sh
-export KEEPER_MAX_BLOCK_RANGE=10
-```
-
-The default is 500.
+If the keeper logs `action=error reason=node-error step=find-orders`, the node refused to read that many blocks at once. Set a smaller `KEEPER_MAX_BLOCK_RANGE` (for example 5) and start the keeper again.
 
 ## 8. Screenshots to take
 
