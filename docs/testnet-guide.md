@@ -58,7 +58,7 @@ There are four secrets: the private keys of wallets A and B, and the node URL (i
 
     This is the zsh way to write `read`, and zsh is the default shell on macOS; in bash it fails. Each line waits for you to paste the value and press Enter. The variables are gone when you close that terminal. If a variable of the same name is set, Hardhat uses it rather than the keystore.
 
-    In a terminal that holds these secrets, run only the commands in this guide. The tests refuse to run on any chain but Hardhat's local one, so `npx hardhat test --network sepolia` and `npm run check` stop without sending anything, but there is no reason to try them there.
+    In a terminal that holds these secrets, run only the commands in this guide. `npm run check` and the tests run on Hardhat's local chain when no network is selected, as usual. If a network that is not local is selected (with `--network` or the `HARDHAT_NETWORK` environment variable), every transaction the tests try is refused before it is sent, however the tests were started, and `npx hardhat test` stops before it runs any test. Only the deploy and operation scripts in this guide can send to Sepolia, and only after their confirmation sentence is set.
 
 - For the keeper (it is a separate program and cannot read Hardhat's keystore): environment variables in its own terminal, set the same way (step 7).
 
@@ -141,7 +141,7 @@ npm run place-order -- --network sepolia
 | `TRIGGER_RECIPIENT_ADDRESS` | Who receives the ETH                    | address                             |
 | `TRIGGER_EXECUTOR_ADDRESS`  | Who may fill it besides you: the keeper | address                             |
 
-You should see `Placed order 1 from account 0x...` with the amount, the target price, the expiry, the allowance (equal to the open-order total) and wallet A's USDC balance. **Write down the order number.**
+You should see `Placed order <number> from account 0x...` with the amount, the target price, the expiry, the allowance (equal to the open-order total) and wallet A's USDC balance. **Write down the order number.**
 
 ## 6. Look at an order, and cancel one
 
