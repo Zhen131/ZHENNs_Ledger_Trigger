@@ -1,0 +1,18 @@
+# Installed packages
+/node_modules
+
+# Hardhat build output and caches
+/artifacts
+/cache
+/types
+/coverage
+
+# TypeScript output
+/dist
+
+# Environment files must never be committed
+.env
+.env.*
+
+# OS files
+.DS_Store
