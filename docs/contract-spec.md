@@ -270,7 +270,7 @@ The demo (`npm run demo`) plays six of these on a fresh local chain: S01 and S03
 9. **Send the ETH.** Send all the ETH that this swap brought in to the recipient.
 10. **Record it.** Emit `OrderFilled`.
 
-If any of steps 6 to 9 fails, the whole transaction is undone, step 5 included, and the order stays open. `canFill` runs steps 2 to 4, in the same order and with the same code, and stops there.
+If any of steps 6 to 9 fails, the whole transaction is undone, step 5 included, and the order stays open. `canFill` runs step 0, leaves out step 1, then runs steps 2 to 4 in the same order and with the same code as `fillOrder`, and stops there.
 
 ### The minimum output
 
