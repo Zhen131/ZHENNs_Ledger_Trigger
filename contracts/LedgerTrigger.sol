@@ -464,12 +464,13 @@ contract LedgerTrigger is ReentrancyGuard {
     /// the ETH that came in to the recipient (`EthTransferFailed`) and emits `OrderFilled`. If the
     /// price feed, the USDC token or the swap venue reverts on the way, the fill reverts with that
     /// call's own revert data, unchanged even when it is empty. Only the two approvals of the swap
-    /// venue (to the order amount, then back to zero) are handled differently: if one reverts,
-    /// OpenZeppelin's `forceApprove` sets the allowance to zero and then to the wanted amount, and a
-    /// revert in those two calls is passed on. A USDC transfer or approval that returns false
-    /// instead of reverting, or a USDC address with no code, makes the fill revert with
-    /// `SafeERC20FailedOperation`. Any rejection undoes the whole call: the order stays `Open` and
-    /// no USDC or ETH moves. The minimum ETH output, in wei, is the larger of
+    /// venue (to the order amount, then back to zero) are handled differently: if one reverts or
+    /// returns false, OpenZeppelin's `forceApprove` tries again, setting the allowance to zero and
+    /// then to the wanted amount, and a revert in those two calls is passed on. A USDC transfer that
+    /// returns something other than true, such as false, instead of reverting, or an approval that
+    /// returns false when tried again, makes the fill revert with `SafeERC20FailedOperation`. Any
+    /// rejection undoes the whole call: the order stays `Open` and no USDC or ETH moves. The
+    /// minimum ETH output, in wei, is the larger of
     /// `usdcAmount * 10^k / targetPrice` (never pay more than the target price) and
     /// `usdcAmount * 10^k * (10000 - maxSlippageBps) / (price * 10000)` (never get much less than
     /// the feed price gives), each worked out in full and rounded down once, with
