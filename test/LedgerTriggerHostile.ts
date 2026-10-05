@@ -163,10 +163,10 @@ describe("LedgerTrigger fillOrder: the swap gives too little ETH (S21)", () => {
     assert.equal(before.owner.usdc - after.owner.usdc, amount);
   });
 
-  it("S21 well below the target price, where the slippage bound is the larger: a venue that pays the minimum less one wei is rejected with InsufficientEthOut, and one that pays the minimum fills", async () => {
+  it("S21 well below the target price, where the slippage bound is the larger and rounding it down twice would lose a wei: a venue that pays the minimum less one wei is rejected with InsufficientEthOut, and one that pays the minimum fills", async () => {
     const f = await setUpWithShortChangingVenue();
     const target = usd(2_000n);
-    const price = usd(1_900n);
+    const price = usd(1_900n) + 1n;
     const amount = 100n * ONE_USDC;
     await f.setPrice(price);
     const { orderId } = await f.place(
@@ -178,6 +178,9 @@ describe("LedgerTrigger fillOrder: the swap gives too little ETH (S21)", () => {
     const parts = minEthOutParts(amount, target, price, SLIPPAGE_BPS);
     assert.ok(parts.withinSlippage > parts.notAboveTarget);
     const m = parts.withinSlippage;
+    const roundedTwice =
+      (((amount * 10n ** 20n) / price) * (10_000n - SLIPPAGE_BPS)) / 10_000n;
+    assert.equal(m - roundedTwice, 1n);
     const before = await moneyAround(f, f.cheated, f.cheat.address);
 
     await f.cheat.write.setMode([Mode.PayGivenAmount, m - 1n]);
