@@ -4,7 +4,18 @@ import { configVariable, defineConfig, overrideTask } from "hardhat/config";
 import { guardTestRun } from "./scripts/testNetworkGuard.ts";
 
 export default defineConfig({
-  plugins: [hardhatToolboxViemPlugin],
+  plugins: [
+    hardhatToolboxViemPlugin,
+    // On every network connection, refuses any request that is not a plain
+    // read when the chain is not Hardhat's local one, unless the send gate of
+    // a deployment or operation script has let it through. This covers every
+    // way of running the tests or any other code here (see
+    // scripts/networkGuard.ts).
+    {
+      id: "local-only-transactions",
+      hookHandlers: { network: () => import("./scripts/networkGuard.ts") },
+    },
+  ],
   solidity: {
     version: "0.8.34",
   },
@@ -25,9 +36,9 @@ export default defineConfig({
     },
   },
   tasks: [
-    // The tests send transactions on the selected network. This runs them on
-    // Hardhat's local chain only: on any other chain the whole run stops
-    // before anything is built, run or sent (see scripts/testNetworkGuard.ts).
+    // A second guard, for `npx hardhat test` and `npm run check`: on any chain
+    // but Hardhat's local one the whole test run stops before anything is
+    // built or run, with one message (see scripts/testNetworkGuard.ts).
     overrideTask(["test", "nodejs"]).setInlineAction(guardTestRun).build(),
   ],
 });
