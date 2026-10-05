@@ -10,7 +10,8 @@
   "scripts": {
     "check": "node scripts/check.ts",
     "format": "prettier --write .",
-    "keeper": "node keeper/main.ts"
+    "keeper": "node keeper/main.ts",
+    "demo": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/demo.ts"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox-viem": "^5.0.7",

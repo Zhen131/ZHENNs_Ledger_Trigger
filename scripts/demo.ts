@@ -280,7 +280,7 @@ export async function runDemo(input: {
     const recipientBefore = await publicClient.getBalance({
       address: recipient.account.address,
     });
-    const log: LogEntry[] = [];
+    const log: string[] = [];
     const round = () =>
       runOnce({
         clients: { publicClient, walletClient: keeper },
@@ -291,7 +291,8 @@ export async function runDemo(input: {
           maxBlockRange: 500n,
         },
         abis: loadAbis(),
-        log: (entry) => log.push(entry),
+        log: (entry: LogEntry) =>
+          log.push(`keeper: ${formatLogLine(entry, new Date())}`),
       });
     await round();
     await setPrice(DEMO_NUMBERS.targetPriceUsd);
@@ -333,7 +334,7 @@ export async function runDemo(input: {
       ],
       [`${before} -> ${after}`, ethResult],
       [
-        ...log.map((entry) => `keeper: ${formatLogLine(entry, new Date())}`),
+        ...log,
         `recipient +${eth(recipientGain)} (OrderFilled reports ${eth(reported)}); keeper's account +${eth(callerGain)} apart from ${eth(gas)} gas`,
       ],
     );
