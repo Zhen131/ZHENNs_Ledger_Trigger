@@ -177,7 +177,7 @@ The keeper logs `action=filled` for order 1, and `order-status` now shows it as 
 
 ### Settings
 
-Amounts are written as people write them (`100`, `12.5`) and turned into whole numbers with the decimals read from the contracts. The deployment defaults are the contract's default limits; any of them can be set to another value at deployment, and none can change afterwards.
+Amounts are written as people write them (`100`, `12.5`) and turned into whole numbers with the decimals read from the contracts. The defaults below are the deployment scripts' own; the contract itself has none. Each limit can be set to another value at deployment, and none of the contract's seven parameters can change afterwards. Both deployments always deploy a new `MockSwapVenue` as the swap venue.
 
 | Variable                         | Used by                        | Meaning                                                            | Unit                     | Default             |
 | -------------------------------- | ------------------------------ | ------------------------------------------------------------------ | ------------------------ | ------------------- |
