@@ -183,7 +183,7 @@ Every script that sends transactions (both deploys, `place-order`, `cancel-order
 I am sending real transactions to a public network
 ```
 
-Even then, only `deploy:external`, `place-order`, `cancel-order` and `fund-venue` go ahead. The demo, `deploy:mocks` and `set-price` never run on another chain. The keeper does not pass through this gate: it is a separate program that runs on whichever node its own settings name.
+Even then, only `deploy:external`, `place-order`, `cancel-order` and `fund-venue` go ahead. The demo, `deploy:mocks` and `set-price` never run on another chain. When the gate lets a script send on a chain that is not local, it records that chain in the running process, and the network guard (see "Run the checks", step 5) then lets that script's transactions through; nothing else, no environment variable included, can make the guard let them through. The keeper does not pass through this gate or the guard: it is a separate program that does not use Hardhat's network connections and runs on whichever node its own settings name.
 
 ## Sepolia test network
 
