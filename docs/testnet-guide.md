@@ -145,8 +145,10 @@ You should see `Placed order 1 from account 0x...` with the amount, the target p
 
 **[Not run on Sepolia]**
 
+Use the order number that `place-order` printed (`Placed order <number> ...`). It is not always 1: every order placed on this LedgerTrigger gets the next number.
+
 ```sh
-export TRIGGER_ORDER_ID=1
+export TRIGGER_ORDER_ID=<the order number place-order printed>
 npm run order-status -- --network sepolia
 ```
 
@@ -158,7 +160,7 @@ To cancel an order (only wallet A, its owner, can):
 npm run cancel-order -- --network sepolia
 ```
 
-You should see `Order 1: Open -> Cancelled.`
+It cancels the order in `TRIGGER_ORDER_ID`. You should see `Order <number>: Open -> Cancelled.`
 
 ## 7. Run the keeper against Sepolia
 
