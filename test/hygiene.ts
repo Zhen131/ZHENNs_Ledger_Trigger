@@ -639,8 +639,8 @@ describe("hygiene scan: command line", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Rules added after the first version of the scan. Each block below only adds
-// cases; the cases above are unchanged.
+// Node-provider keys, commit-log parsing, three-digit log codes, binary files
+// and origin() in inline assembly.
 // ---------------------------------------------------------------------------
 
 /** Small seeded generator, so "random" samples are the same on every run. */
@@ -875,7 +875,7 @@ describe("hygiene scan: reading the commit history", () => {
       1,
     ],
   ] as const) {
-    it(`refuses, instead of skipping, a commit log that ${label}`, () => {
+    it(`throws on a commit log that ${label}`, () => {
       assert.throws(() => parseCommitLog(output, expectedCount));
     });
   }
@@ -931,14 +931,14 @@ describe("hygiene scan: binary files", () => {
     assert.equal(result.binaryFileCount, 1);
   });
 
-  it("still flags the same word in a text file", () => {
+  it("flags the same word in a text file", () => {
     assertFlagged(
       scanOneFile("notes.md", `written by ${acronym}\n`),
       "content/tool-attribution",
     );
   });
 
-  it("still applies the key-material rules to a binary file", () => {
+  it("applies the key-material rules to a binary file", () => {
     const secretText = [
       `key ${"ab".repeat(32)}`,
       join(
@@ -963,7 +963,7 @@ describe("hygiene scan: binary files", () => {
     assertFlagged(findings, "content/seed-phrase-word");
   });
 
-  it("still checks the name of a binary file", () => {
+  it("checks the name of a binary file", () => {
     const directory = createRepo();
     writeBinary(
       directory,
