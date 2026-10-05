@@ -94,7 +94,8 @@ contract MockSwapVenue is ISwapVenue {
     receive() external payable {} // solhint-disable-line no-empty-blocks
 
     /// @inheritdoc ISwapVenue
-    /// @dev Pays `mulDiv(mulDiv(usdcAmount, 10^k, price), 10000 - feeBps, 10000)` wei, each step
+    /// @dev Anyone can call it; the caller approves the venue for `usdcAmount` USDC first.
+    /// Pays `mulDiv(mulDiv(usdcAmount, 10^k, price), 10000 - feeBps, 10000)` wei, each step
     /// rounded down. Checks, in order: the price is above zero (`NonPositivePrice`); the payout
     /// is at least `minEthOut` (`InsufficientOutput`); the venue holds enough ETH
     /// (`InsufficientEthReserve`). Then it takes the USDC, which reverts with the token's own

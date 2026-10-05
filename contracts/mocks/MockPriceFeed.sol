@@ -47,7 +47,8 @@ contract MockPriceFeed is IPriceFeed {
     }
 
     /// @inheritdoc IPriceFeed
-    /// @dev `startedAt` always equals `updatedAt`, and `answeredInRound` always equals `roundId`.
+    /// @dev Anyone can call it; it never reverts. `startedAt` always equals `updatedAt`, and
+    /// `answeredInRound` always equals `roundId`.
     function latestRoundData()
         external
         view
