@@ -27,9 +27,11 @@
 // asks the connection's own node for its chain ID, and only when that is the
 // chain the gate decided on does it record that very connection as open. The
 // record is kept by the guard per connection object, never per chain ID. A
-// stand-in client cannot open anything: its request never reaches a real
-// connection, and a request that does reaches only the connection it was
-// sent on.
+// stand-in client that only reports a chain ID opens nothing: its request
+// never reaches a guarded connection. A client that passes the request on to
+// a real connection can open that one connection and no other, and only when
+// that connection's own node serves the chain the gate decided on; that is
+// the same as passing the gate, with the confirmation, on that connection.
 
 import { randomUUID } from "node:crypto";
 
