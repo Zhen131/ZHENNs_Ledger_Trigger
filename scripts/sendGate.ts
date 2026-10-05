@@ -16,6 +16,12 @@
 // `checkSendGate` decides from the chain ID and the variable's value alone, so
 // it can be tested without any network. `passSendGate` asks the node for the
 // chain ID, then applies `checkSendGate`, and throws when the answer is no.
+//
+// When `passSendGate` lets a script send on a chain that is not local, it
+// records that chain ID in this module, for the rest of the process. The
+// network guard (networkGuard.ts) lets transactions through to such a chain
+// only once it is recorded here. Nothing else can record a chain: the record
+// is private to this module, and no environment variable or setting feeds it.
 
 import { ScriptError } from "./scriptError.ts";
 
@@ -108,5 +114,18 @@ export async function passSendGate(
   const chainId = await client.getChainId();
   const decision = checkSendGate({ script, chainId, confirmation });
   if (!decision.allowed) throw new ScriptError(decision.reason);
+  if (!isLocalChain(chainId)) confirmedChains.add(chainId);
   return chainId;
+}
+
+/** The chains, not local, on which `passSendGate` has let a script send. */
+const confirmedChains = new Set<number>();
+
+/**
+ * True when, in this process, the send gate has let a script send on
+ * `chainId`, a chain that is not Hardhat's local one. Only `passSendGate`
+ * records a chain.
+ */
+export function gateConfirmedChain(chainId: number): boolean {
+  return confirmedChains.has(chainId);
 }
