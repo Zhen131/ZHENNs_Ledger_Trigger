@@ -58,7 +58,7 @@ There are four secrets: the private keys of wallets A and B, and the node URL (i
 
     This is the zsh way to write `read`, and zsh is the default shell on macOS; in bash it fails. Each line waits for you to paste the value and press Enter. The variables are gone when you close that terminal. If a variable of the same name is set, Hardhat uses it rather than the keystore.
 
-    In a terminal that holds these secrets, run only the commands in this guide. `npm run check` and the tests run on Hardhat's local chain when no network is selected, as usual. If a network that is not local is selected (with `--network` or the `HARDHAT_NETWORK` environment variable), every transaction the tests try is refused before it is sent, however the tests were started, and `npx hardhat test` stops before it runs any test. Only the deploy and operation scripts in this guide can send to Sepolia, and only after their confirmation sentence is set.
+    In a terminal that holds these secrets, run only the commands in this guide. `npm run check` and the tests run on Hardhat's local chain when no network is selected, as usual. If a network that is not local is selected (with `--network` or the `HARDHAT_NETWORK` environment variable), every transaction the tests try is refused before it is sent, however the tests were started and whatever file was loaded with them, and `npx hardhat test` stops before it runs any test. Only the deploy and operation scripts in this guide can send to Sepolia: each one only after its confirmation sentence is set, and only over the one connection it opened through its send gate.
 
 - For the keeper (it is a separate program and cannot read Hardhat's keystore): environment variables in its own terminal, set the same way (step 7).
 
