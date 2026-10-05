@@ -66,7 +66,7 @@ No script in this repository prints a private key or the node URL.
 
 ## 3. Deploy
 
-The external-parts deployment uses the real Sepolia USDC and price feed. It deploys two contracts: a mock swap venue and LedgerTrigger. **[Not run on Sepolia]**
+The external-parts deployment uses the real Sepolia USDC and price feed. It deploys two contracts: a mock swap venue and LedgerTrigger. (The other deployment, `deploy:mocks`, runs on Hardhat's local chain only and refuses Sepolia.) **[Not run on Sepolia]**
 
 1. In a new terminal, go to the repository and set the two secrets for Hardhat (step 2).
 2. Set the two addresses from step 1.4, and the confirmation sentence. The scripts refuse to send anything to a chain other than Hardhat's local chain unless `TRIGGER_CONFIRM_PUBLIC_NETWORK` holds exactly this sentence:
@@ -117,7 +117,7 @@ npm run fund-venue -- --network sepolia
 
 ## 5. Approve and place an order
 
-The script sets wallet A's USDC allowance for LedgerTrigger to what all of A's open orders add up to (`openOrderTotal`), then places the order. **[Not run on Sepolia]**
+The script first checks the order without sending anything: if the contract would reject it (for example it is above the largest order, or wallet A already has 5 open orders), it stops with the contract's error name and sends nothing. Otherwise it sets wallet A's USDC allowance for LedgerTrigger to what all of A's open orders add up to (`openOrderTotal`), then places the order. **[Not run on Sepolia]**
 
 The price on Sepolia moves by itself; nobody can set it. So:
 
