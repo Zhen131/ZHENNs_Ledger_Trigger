@@ -167,7 +167,7 @@ describe("LedgerTrigger deployment: decimals are read, not assumed", () => {
   });
 
   for (const feedDecimals of [18, 0]) {
-    it(`stores the decimals of a ${feedDecimals}-decimal feed`, async () => {
+    it(`stores the decimals of a feed with ${feedDecimals} decimals`, async () => {
       const { trigger } = await deployLedgerTrigger({
         feedDecimals,
         initialPrice: usd(2_000n, feedDecimals),
