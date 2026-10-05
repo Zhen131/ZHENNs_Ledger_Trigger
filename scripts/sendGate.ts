@@ -21,6 +21,15 @@ import { ScriptError } from "./scriptError.ts";
 /** Chain ID of Hardhat's local chains. */
 export const LOCAL_CHAIN_ID = 31337;
 
+/**
+ * True for Hardhat's local chain. This is the one rule for "local" everywhere
+ * in this repository: the send gate and the guard that keeps the tests on the
+ * local chain both use it.
+ */
+export function isLocalChain(chainId: number): boolean {
+  return chainId === LOCAL_CHAIN_ID;
+}
+
 /** The environment variable that confirms sending to a chain that is not local. */
 export const CONFIRM_VARIABLE = "TRIGGER_CONFIRM_PUBLIC_NETWORK";
 
@@ -59,7 +68,7 @@ export type GateInput = {
 
 /** Says whether `script` may send transactions on the chain `chainId`. */
 export function checkSendGate(input: GateInput): GateDecision {
-  if (input.chainId === LOCAL_CHAIN_ID) return { allowed: true };
+  if (isLocalChain(input.chainId)) return { allowed: true };
   const where = `chain ${input.chainId}, which is not Hardhat's local chain (${LOCAL_CHAIN_ID})`;
   if (LOCAL_ONLY.includes(input.script)) {
     return {
