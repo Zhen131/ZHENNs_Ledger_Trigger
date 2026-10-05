@@ -13,7 +13,12 @@
     "keeper": "node keeper/main.ts",
     "demo": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/demo.ts",
     "deploy:mocks": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/deploy-mocks.ts",
-    "deploy:external": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/deploy-external.ts"
+    "deploy:external": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/deploy-external.ts",
+    "place-order": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/place-order.ts",
+    "cancel-order": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/cancel-order.ts",
+    "fund-venue": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/fund-venue.ts",
+    "order-status": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/order-status.ts",
+    "set-price": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/set-price.ts"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox-viem": "^5.0.7",
