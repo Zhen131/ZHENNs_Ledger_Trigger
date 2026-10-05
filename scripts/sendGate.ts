@@ -8,9 +8,10 @@
 //   every script may send.
 // - Any other chain: nothing is sent unless the environment variable
 //   TRIGGER_CONFIRM_PUBLIC_NETWORK holds exactly CONFIRM_PHRASE. Even then only
-//   the deployment, placing, cancelling and stocking may send. The demo and
-//   setting the mock price never run on another chain, whatever the variable
-//   holds: they only make sense on a local chain.
+//   the deployment with external parts, placing, cancelling and stocking may
+//   send. The demo, setting the mock price and the deployment with mock parts
+//   never run on another chain, whatever the variable holds: they only make
+//   sense on a local chain.
 //
 // `checkSendGate` decides from the chain ID and the variable's value alone, so
 // it can be tested without any network. `passSendGate` asks the node for the
@@ -39,7 +40,10 @@ export const CONFIRM_PHRASE =
 
 /** The scripts that send transactions. */
 export const GatedScript = {
+  /** The deployment with external parts. */
   Deploy: "deploy",
+  /** The deployment with mock parts. */
+  DeployMocks: "deploy-mocks",
   PlaceOrder: "place-order",
   CancelOrder: "cancel-order",
   FundVenue: "fund-venue",
@@ -50,6 +54,7 @@ export type GatedScript = (typeof GatedScript)[keyof typeof GatedScript];
 
 /** The scripts that run on Hardhat's local chain only. */
 export const LOCAL_ONLY: readonly GatedScript[] = [
+  GatedScript.DeployMocks,
   GatedScript.SetPrice,
   GatedScript.Demo,
 ];

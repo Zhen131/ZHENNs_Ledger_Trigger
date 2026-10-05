@@ -126,7 +126,7 @@ const SCRIPTS: readonly (readonly [
   ],
 ];
 
-const LOCAL_ONLY = new Set(["set-price"]);
+const LOCAL_ONLY = new Set(["set-price", "deploy with mock parts"]);
 
 async function assertRefusedAndNothingSent(
   s: Ready,

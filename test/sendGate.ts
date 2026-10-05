@@ -21,17 +21,22 @@ const CONFIRMABLE = [
   GatedScript.CancelOrder,
   GatedScript.FundVenue,
 ];
-const NEVER_ELSEWHERE = [GatedScript.Demo, GatedScript.SetPrice];
+const NEVER_ELSEWHERE = [
+  GatedScript.Demo,
+  GatedScript.SetPrice,
+  GatedScript.DeployMocks,
+];
 
 /** Chain IDs that are not Hardhat's local chain: Sepolia, mainnet, made up. */
 const OTHER_CHAINS = [11_155_111, 1, 999];
 
 describe("send gate: the decision", () => {
-  it("lists exactly the six scripts that send transactions", () => {
+  it("lists exactly the seven scripts that send transactions", () => {
     assert.deepEqual([...ALL_SCRIPTS].sort(), [
       "cancel-order",
       "demo",
       "deploy",
+      "deploy-mocks",
       "fund-venue",
       "place-order",
       "set-price",

@@ -1,6 +1,7 @@
 // Deploys LedgerTrigger with the parts it needs, in one of two modes:
 //
-// - mock parts (for a local chain): deploys MockUSDC, MockPriceFeed,
+// - mock parts (Hardhat's local chain only; the send gate refuses every other
+//   chain, whatever the confirmation variable holds): deploys MockUSDC, MockPriceFeed,
 //   MockSwapVenue and LedgerTrigger, stocks the swap venue with some ETH and
 //   mints some mock USDC to the deploying account, so that it can place and
 //   fill orders straight away;
@@ -23,6 +24,7 @@ import type { NetworkConnection } from "hardhat/types/network";
 import { erc20Abi, type Address } from "viem";
 
 import { formatDecimal, parseDecimal, parseWhole } from "./amounts.ts";
+import { scriptClients } from "./clients.ts";
 import { ScriptError } from "./scriptError.ts";
 import { GatedScript, passSendGate } from "./sendGate.ts";
 import {
@@ -180,7 +182,7 @@ export async function checkExternalParts(
   usdc: Address,
   priceFeed: Address,
 ): Promise<PartsCheck> {
-  const publicClient = await viem.getPublicClient({ ccipRead: false });
+  const { publicClient, client } = await scriptClients(viem);
   const chainId = await publicClient.getChainId();
   const wrong = (variable: string, address: Address, what: string) =>
     new ScriptError(
@@ -209,9 +211,7 @@ export async function checkExternalParts(
       "did not answer decimals() like a token",
     );
   }
-  const feed = await viem.getContractAt("IPriceFeed", priceFeed, {
-    client: { public: publicClient },
-  });
+  const feed = await viem.getContractAt("IPriceFeed", priceFeed, { client });
   let feedDecimals: number;
   let latestPrice: bigint;
   let updatedAt: bigint;
@@ -238,27 +238,31 @@ async function deployVenueAndTrigger(
   usdcDecimals: number,
   settings: DeploySettings,
 ) {
-  const publicClient = await viem.getPublicClient();
+  const { publicClient, client } = await scriptClients(viem);
   const maxOrderAmount = parseDecimal(
     settings.maxOrderUsdc,
     usdcDecimals,
     VARIABLES.maxOrderUsdc,
   );
-  const venue = await viem.deployContract("MockSwapVenue", [
-    usdc,
-    priceFeed,
-    settings.venueFeeBps,
-  ]);
+  const venue = await viem.deployContract(
+    "MockSwapVenue",
+    [usdc, priceFeed, settings.venueFeeBps],
+    { client },
+  );
   const { contract: trigger, deploymentTransaction } =
-    await viem.sendDeploymentTransaction("LedgerTrigger", [
-      usdc,
-      priceFeed,
-      venue.address,
-      maxOrderAmount,
-      settings.maxOpenOrders,
-      settings.maxPriceAgeSeconds,
-      settings.maxSlippageBps,
-    ]);
+    await viem.sendDeploymentTransaction(
+      "LedgerTrigger",
+      [
+        usdc,
+        priceFeed,
+        venue.address,
+        maxOrderAmount,
+        settings.maxOpenOrders,
+        settings.maxPriceAgeSeconds,
+        settings.maxSlippageBps,
+      ],
+      { client },
+    );
   const receipt = await publicClient.waitForTransactionReceipt({
     hash: deploymentTransaction.hash,
   });
@@ -313,13 +317,13 @@ export async function deployWithMocks(input: {
   readonly mocks: MockSettings;
 }): Promise<DeploymentReport> {
   const { viem, settings, mocks } = input;
-  const publicClient = await viem.getPublicClient();
+  const { publicClient, walletClients, client } = await scriptClients(viem);
   const chainId = await passSendGate(
     publicClient,
-    GatedScript.Deploy,
+    GatedScript.DeployMocks,
     input.confirmation,
   );
-  const [deployer] = await viem.getWalletClients();
+  const [deployer] = walletClients;
   if (deployer === undefined) {
     throw new ScriptError("The network has no account to deploy from.");
   }
@@ -334,11 +338,12 @@ export async function deployWithMocks(input: {
     VARIABLES.mockVenueEth,
   );
 
-  const usdc = await viem.deployContract("MockUSDC");
-  const feed = await viem.deployContract("MockPriceFeed", [
-    MOCK_FEED_DECIMALS,
-    firstPrice,
-  ]);
+  const usdc = await viem.deployContract("MockUSDC", [], { client });
+  const feed = await viem.deployContract(
+    "MockPriceFeed",
+    [MOCK_FEED_DECIMALS, firstPrice],
+    { client },
+  );
   const usdcDecimals = await usdc.read.decimals();
   const deployed = await deployVenueAndTrigger(
     viem,
@@ -404,13 +409,13 @@ export async function deployWithExternalParts(input: {
   readonly onChecked?: (check: PartsCheck) => void;
 }): Promise<{ readonly check: PartsCheck; readonly report: DeploymentReport }> {
   const { viem, settings } = input;
-  const publicClient = await viem.getPublicClient();
+  const { publicClient, walletClients } = await scriptClients(viem);
   const chainId = await passSendGate(
     publicClient,
     GatedScript.Deploy,
     input.confirmation,
   );
-  const [deployer] = await viem.getWalletClients();
+  const [deployer] = walletClients;
   if (deployer === undefined) {
     throw new ScriptError("The network has no account to deploy from.");
   }
