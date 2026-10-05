@@ -74,6 +74,9 @@ export function describeFailure(error: unknown): string {
   if (name !== undefined && error instanceof BaseError) {
     return `The contract rejected the call with ${name}(${revertArguments(error)}).`;
   }
+  if (errorTypes(error).includes("InsufficientFundsError")) {
+    return "The sending account does not hold enough ETH to pay for this transaction. Get test ETH for it from a faucet, then run the script again.";
+  }
   const code = hardhatCode(error);
   if (code !== undefined) {
     return `Hardhat stopped the script with error ${code}. The section "When something goes wrong" in docs/testnet-guide.md explains the common ones.`;
