@@ -983,6 +983,83 @@ describe("hygiene scan: binary files", () => {
     assert.equal(run.status, 0, run.stdout + run.stderr);
     assert.match(run.stdout, /2 files \(1 read as binary\)/);
   });
+
+  /** Random bytes followed by `text` between zero bytes. */
+  function binaryWith(text: string): Buffer {
+    return Buffer.concat([
+      randomBinary(),
+      Buffer.from(`\0${text}\0`, "latin1"),
+    ]);
+  }
+
+  for (const [label, sample, rule] of [
+    [
+      "a local absolute path under Users",
+      join("/Us", "ers/someone/project"),
+      "content/local-path",
+    ],
+    [
+      "a local absolute path under home",
+      join("/ho", "me/someone/project"),
+      "content/local-path",
+    ],
+    ["a long tool name", join("Clau", "de"), "content/tool-attribution"],
+    ["a vendor name", join("Anthro", "pic"), "content/tool-attribution"],
+    [
+      "an attribution line",
+      join("Co-Authored", "-By: Helper"),
+      "content/tool-attribution",
+    ],
+    [
+      "a three-digit private log code",
+      join("100", "B_W", "21"),
+      "content/private-log-code",
+    ],
+  ] as const) {
+    it(`flags ${label} inside a binary file`, () => {
+      const directory = createRepo();
+      writeBinary(directory, "assets/picture.png", binaryWith(sample));
+
+      const result = scanRepository(directory);
+
+      assert.equal(result.binaryFileCount, 1);
+      assertFlagged(result.findings, rule);
+    });
+  }
+
+  it("in one binary file, flags a local path and a long tool name but not the two-letter word", () => {
+    const directory = createRepo();
+    writeBinary(
+      directory,
+      "assets/picture.png",
+      binaryWith(join("/Us", "ers/someone\0", "Clau", "de")),
+    );
+
+    const findings = scanRepository(directory).findings;
+
+    assert.deepEqual(
+      [...new Set(findings.map((finding) => finding.rule))].sort(),
+      ["content/local-path", "content/tool-attribution"],
+      describeAll(findings),
+    );
+    assertClean(
+      findings.filter((finding) => finding.detail.endsWith(`"${acronym}"`)),
+    );
+  });
+
+  it("reads a text file with a single zero byte as binary and flags a local path in it", () => {
+    const directory = createRepo();
+    writeBinary(
+      directory,
+      "notes.md",
+      Buffer.from(join("intro\0\npath: ", "/Us", "ers/someone\n"), "utf8"),
+    );
+
+    const result = scanRepository(directory);
+
+    assert.equal(result.binaryFileCount, 1);
+    assertFlagged(result.findings, "content/local-path");
+  });
 });
 
 describe("hygiene scan: origin() in inline assembly", () => {

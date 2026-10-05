@@ -13,10 +13,11 @@
 // printed), 2 when the scan itself could not run, including when the commit
 // history cannot be read back reliably (no commit is ever skipped silently).
 //
-// A file that contains a zero byte is read as binary. For binary files only
-// the file name and the key-material rules apply (private keys, seed phrases,
-// URLs with keys), because random bytes often spell short words by chance.
-// The summary line says how many files were read as binary.
+// A file that contains a zero byte is read as binary. Its contents are checked
+// by every content rule except two: Chinese characters and the two-letter tool
+// acronym, because random bytes produce both by chance far too often. Its file
+// name is checked by every rule. The summary line says how many files were
+// read as binary.
 //
 // Several words this scan looks for would make it flag itself if they were
 // written out in one piece here. They are split with a one-letter character
@@ -57,10 +58,10 @@ type PatternRule = {
   /** When true, the matched text is not echoed in the report. */
   readonly secret: boolean;
   /**
-   * When true, the rule looks for key material and also applies to the
-   * contents of binary files.
+   * When true, the rule does not apply to the contents of binary files,
+   * because random bytes match it by chance too often.
    */
-  readonly keyMaterial?: boolean;
+  readonly skipInBinary?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -72,6 +73,7 @@ const HAN_RULE: PatternRule = {
   description: "Chinese character (the repository is English only)",
   pattern: /\p{Script=Han}/gu,
   secret: false,
+  skipInBinary: true,
 };
 
 export const CONTENT_RULES: readonly PatternRule[] = [
@@ -106,6 +108,7 @@ export const CONTENT_RULES: readonly PatternRule[] = [
     description: "the two-letter capitalised tool acronym as a standalone word",
     pattern: /(?<![A-Za-z0-9])[A]I(?![A-Za-z0-9])/g,
     secret: false,
+    skipInBinary: true,
   },
   {
     id: "content/local-path",
@@ -119,14 +122,12 @@ export const CONTENT_RULES: readonly PatternRule[] = [
       "run of 64 or more hex digits (private-key length), with or without 0x",
     pattern: /[0-9a-fA-F]{64,}/g,
     secret: true,
-    keyMaterial: true,
   },
   {
     id: "content/seed-phrase-word",
     description: "the word used for wallet seed phrases",
     pattern: /mn[e]monic/gi,
     secret: false,
-    keyMaterial: true,
   },
 ];
 
@@ -452,21 +453,21 @@ function scanProviderKeys(
 
 /**
  * Content rules for any text: a file body or a commit message. With
- * `keyMaterialOnly`, only the rules that look for key material run (private
- * keys, seed phrases, URLs with keys); this is how binary files are read.
+ * `binary`, the rules marked `skipInBinary` (Chinese characters and the
+ * two-letter tool acronym) are left out; this is how binary files are read.
  */
 export function scanText(
   where: string,
   text: string,
   options: {
-    readonly keyMaterialOnly?: boolean;
+    readonly binary?: boolean;
     readonly withLines?: boolean;
   } = {},
 ): Finding[] {
   const lineOf = (index: number) =>
     options.withLines === false ? undefined : lineAt(text, index);
-  const rules = options.keyMaterialOnly
-    ? CONTENT_RULES.filter((rule) => rule.keyMaterial === true)
+  const rules = options.binary
+    ? CONTENT_RULES.filter((rule) => rule.skipInBinary !== true)
     : CONTENT_RULES;
   return [
     ...applyRules(where, text, rules, lineOf),
@@ -545,12 +546,11 @@ function scanFile(root: string, relativePath: string): FileScan {
 
   const bytes = readFileSync(absolute);
   const binary = bytes.includes(0);
-  // Binary files are read byte by byte so the ASCII key patterns still match.
-  // Only the key-material rules apply to them: random bytes spell short words
-  // such as the two-letter tool acronym, or decode into Chinese characters,
-  // far too often for the other rules to mean anything.
+  // Binary files are read byte by byte so the ASCII patterns match. Random
+  // bytes decode into Chinese characters and spell the two-letter tool
+  // acronym far too often, so those two rules are left out for them.
   const text = bytes.toString(binary ? "latin1" : "utf8");
-  findings.push(...scanText(relativePath, text, { keyMaterialOnly: binary }));
+  findings.push(...scanText(relativePath, text, { binary }));
   if (relativePath.endsWith(".sol")) {
     findings.push(...scanSolidity(relativePath, text));
   }
