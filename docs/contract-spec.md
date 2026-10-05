@@ -207,7 +207,7 @@ At deployment: none of the three addresses is the zero address; `maxOrderAmount`
 stateDiagram-v2
     direction LR
     [*] --> Open: createOrder by anyone, who becomes the owner
-    Open --> Filled: fillOrder by the owner or the executor, price at or below the target, not expired, USDC covered
+    Open --> Filled: fillOrder by owner or executor, price met, not expired, USDC enough
     Open --> Cancelled: cancelOrder by the owner only
     Open --> Expired: expiry passed, worked out from the time and never stored
     Expired --> Cancelled: cancelOrder by the owner only, which frees the slot
@@ -215,6 +215,7 @@ stateDiagram-v2
     Cancelled --> [*]
 ```
 
+- `Open -> Filled` needs all four: the caller is the owner or the executor; the price feed reports a valid, recent price at or below the target ("price met"); the order has not expired; and the owner's USDC balance and allowance both cover the order amount ("USDC enough").
 - Final states: `Filled` and `Cancelled`. An order can never be both filled and cancelled.
 - `Expired` is not a stored state. In storage an expired order is still `Open`, so **it still takes one of its owner's open-order slots until the owner cancels it**. It can no longer be filled.
 - When a fill and a cancel of the same order are sent at the same time, whichever the chain includes first takes effect, and the other is rejected.
