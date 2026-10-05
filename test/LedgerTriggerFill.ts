@@ -43,6 +43,7 @@ describe("LedgerTrigger fillOrder: an order is filled (S01, S02)", () => {
     const { trigger, owner, recipient, place, fill, balancesOf } =
       await setUpFills();
     const { orderId, input } = await place();
+    assert.equal(await trigger.read.statusOf([orderId]), Status.Open);
     const recipientBefore = await balancesOf(recipient.account.address);
 
     const { event, callerEthChange } = await fill(orderId, owner);

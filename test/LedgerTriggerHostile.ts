@@ -323,6 +323,25 @@ describe("LedgerTrigger fillOrder: a recipient that cannot take ETH (S23)", () =
       usdc: 0n,
     });
   });
+
+  it("S23 an order whose recipient is the contract itself cannot be filled: the contract refuses the ETH, so EthTransferFailed, and the order stays Open", async () => {
+    const f = await setUpFills();
+    const { orderId, input } = await f.place({ recipient: f.trigger.address });
+    const before = await moneyAround(f, f.trigger, f.venue.address);
+
+    await f.viem.assertions.revertWithCustomErrorWithArgs(
+      f.sendFill(orderId),
+      f.trigger,
+      "EthTransferFailed",
+      [
+        getAddress(f.trigger.address),
+        venueEthOut(input.usdcAmount, input.targetPrice),
+      ],
+    );
+
+    assert.equal(await f.trigger.read.statusOf([orderId]), Status.Open);
+    assert.deepEqual(await moneyAround(f, f.trigger, f.venue.address), before);
+  });
 });
 
 describe("MockSwapVenue: a caller that cannot take the ETH", () => {
