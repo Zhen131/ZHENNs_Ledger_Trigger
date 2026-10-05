@@ -83,7 +83,10 @@ function skip(
   return { orderId, action: Action.Skip, reason, details };
 }
 
-async function handleOrder(input: RoundInput, orderId: bigint) {
+async function handleOrder(
+  input: RoundInput,
+  orderId: bigint,
+): Promise<LogEntry> {
   const { publicClient, walletClient } = input.clients;
   const contract = {
     address: input.settings.contractAddress,
@@ -96,6 +99,7 @@ async function handleOrder(input: RoundInput, orderId: bigint) {
     account: walletClient.account,
   } as const;
   let step = "statusOf";
+  let hash: Hash | undefined;
   try {
     const status = await publicClient.readContract({
       ...contract,
@@ -132,7 +136,7 @@ async function handleOrder(input: RoundInput, orderId: bigint) {
     }
 
     step = "send";
-    const hash: Hash = await walletClient.writeContract({
+    hash = await walletClient.writeContract({
       ...fill,
       gas,
       maxFeePerGas,
@@ -161,11 +165,15 @@ async function handleOrder(input: RoundInput, orderId: bigint) {
       details: [["tx", hash]],
     } satisfies LogEntry;
   } catch (error) {
-    return failureEntry(
+    const entry = failureEntry(
       orderId,
       step,
       classifyFailure({ kind: FailureKind.Thrown, error }, input.abis.errors),
     );
+    // A transaction that was sent may still be mined: say which one it was.
+    return hash === undefined
+      ? entry
+      : { ...entry, details: [...entry.details, ["tx", hash] as const] };
   }
 }
 
