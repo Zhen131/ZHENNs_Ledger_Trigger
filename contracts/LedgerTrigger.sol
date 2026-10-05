@@ -651,8 +651,9 @@ contract LedgerTrigger is ReentrancyGuard {
         if (blocker == FillBlocker.Expired) {
             revert OrderExpired(orderId, order.expiry);
         }
-        if (blocker == FillBlocker.InvalidPrice)
+        if (blocker == FillBlocker.InvalidPrice) {
             revert InvalidPrice(check.price);
+        }
         if (blocker == FillBlocker.StalePrice) {
             revert StalePrice(check.updatedAt, maxPriceAge);
         }
