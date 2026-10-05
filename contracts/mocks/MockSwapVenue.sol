@@ -16,8 +16,10 @@ import {ISwapVenue} from "../interfaces/ISwapVenue.sol";
 /// @dev Not a real exchange. It is open to everyone and has no admin: nobody can change its fee,
 /// its token or its feed after deployment, and nobody can take its ETH out except by swapping.
 /// It does not look at how old the price is, just as a real venue does not. The error
-/// `SafeERC20FailedOperation` in its interface comes from OpenZeppelin: a USDC transfer that
-/// failed without an error of its own, or returned false.
+/// `SafeERC20FailedOperation` in its interface comes from OpenZeppelin: the USDC transfer did not
+/// revert but returned something other than true, such as false, or the USDC address has no code.
+/// A USDC transfer that reverts is not turned into that error: its own revert data is passed on
+/// unchanged, even when it is empty.
 contract MockSwapVenue is ISwapVenue {
     using SafeERC20 for IERC20;
 

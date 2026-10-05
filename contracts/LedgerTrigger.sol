@@ -21,8 +21,10 @@ import {ISwapVenue} from "./interfaces/ISwapVenue.sol";
 /// parameters can never change. The status `Expired` is never stored; `statusOf` works it out from
 /// the expiry. The contract keeps no USDC and no ETH: a fill passes all of both straight through.
 /// Two errors in its interface come from OpenZeppelin: `ReentrancyGuardReentrantCall` (a call to
-/// `fillOrder` made while a fill is running) and `SafeERC20FailedOperation` (a USDC call that
-/// failed without an error of its own, or returned false).
+/// `fillOrder` made while a fill is running) and `SafeERC20FailedOperation` (a USDC transfer or
+/// approval that did not revert but returned something other than true, such as false, or a USDC
+/// address with no code). A USDC call that reverts is not turned into that error: its own revert
+/// data is passed on unchanged, even when it is empty.
 contract LedgerTrigger is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -457,7 +459,11 @@ contract LedgerTrigger is ReentrancyGuard {
     /// minimum (`InsufficientEthOut`). It then sets the venue's allowance back to zero, sends all of
     /// the ETH that came in to the recipient (`EthTransferFailed`) and emits `OrderFilled`. If the
     /// price feed, the USDC token or the swap venue reverts on the way, the fill reverts with that
-    /// error; a USDC call that fails without an error of its own reverts with
+    /// call's own revert data, unchanged even when it is empty. Only the two approvals of the swap
+    /// venue (to the order amount, then back to zero) are handled differently: if one reverts,
+    /// OpenZeppelin's `forceApprove` sets the allowance to zero and then to the wanted amount, and a
+    /// revert in those two calls is passed on. A USDC transfer or approval that returns false
+    /// instead of reverting, or a USDC address with no code, makes the fill revert with
     /// `SafeERC20FailedOperation`. Any rejection undoes the whole call: the order stays `Open` and
     /// no USDC or ETH moves. The minimum ETH output, in wei, is the larger of
     /// `usdcAmount * 10^k / targetPrice` (never pay more than the target price) and
