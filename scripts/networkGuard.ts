@@ -56,8 +56,8 @@ import {
 /** Shown as the source of the error when the guard refuses a request. */
 export const NETWORK_GUARD_ID = "local-only-transactions";
 
-/** JSON-RPC methods that only read, and pass on any chain. */
-export const READ_ONLY_METHODS: ReadonlySet<string> = new Set([
+/** JSON-RPC methods that only read, and pass on any chain, in a frozen array. */
+const READ_ONLY_METHOD_NAMES: readonly string[] = Object.freeze([
   "eth_accounts",
   "eth_blobBaseFee",
   "eth_blockNumber",
@@ -89,6 +89,23 @@ export const READ_ONLY_METHODS: ReadonlySet<string> = new Set([
   "net_version",
   "web3_clientVersion",
 ]);
+
+/** The same methods, for the guard's own lookups. Never exported. */
+const readOnlyMethodSet: ReadonlySet<string> = new Set(READ_ONLY_METHOD_NAMES);
+
+/**
+ * The JSON-RPC methods that only read, and pass on any chain. A frozen object,
+ * not a Set: other modules can ask it (`has`) and list it (`methods`, a frozen
+ * array), but cannot add a method to it or take one out, and the guard looks
+ * methods up in its own copy, which no other module can reach.
+ */
+export const READ_ONLY_METHODS: {
+  readonly has: (method: string) => boolean;
+  readonly methods: readonly string[];
+} = Object.freeze({
+  has: (method: string) => readOnlyMethodSet.has(method),
+  methods: READ_ONLY_METHOD_NAMES,
+});
 
 /** Why a request was refused, in this project's own words. */
 export function refusalReason(
@@ -206,7 +223,7 @@ async function onRequest(
   if (connection.networkConfig.type === "edr-simulated") {
     return next(context, connection, request);
   }
-  if (READ_ONLY_METHODS.has(request.method)) {
+  if (readOnlyMethodSet.has(request.method)) {
     return next(context, connection, request);
   }
   const decision = await mayWrite({
