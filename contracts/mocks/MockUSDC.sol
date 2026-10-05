@@ -11,8 +11,11 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 /// `decimals`, its functions, events and errors are OpenZeppelin's ERC20, unchanged: anyone can
 /// read `name`, `symbol`, `totalSupply`, `balanceOf` and `allowance`, which never revert;
 /// anyone can `transfer` their own tokens, `approve` a spender for them, and `transferFrom` up
-/// to the allowance they were given, each of which reverts with the matching `ERC20...` error
-/// when the balance or the allowance is too small or an address is the zero address.
+/// to the allowance they were given. `transfer` and `transferFrom` revert with
+/// `ERC20InsufficientBalance` when the balance is too small and with `ERC20InvalidReceiver` when
+/// the receiver is the zero address; `transferFrom` also reverts with `ERC20InsufficientAllowance`
+/// when the allowance is too small; `approve` reverts with `ERC20InvalidSpender` when the spender
+/// is the zero address.
 contract MockUSDC is ERC20 {
     /// @notice Deploys the token with zero supply.
     constructor() ERC20("Mock USD Coin", "mUSDC") {}

@@ -17,8 +17,8 @@ interface IPriceFeed {
     /// @notice Latest price and when it was last updated.
     /// @dev Anyone can call it. The caller must check that `answer` is positive and that
     /// `updatedAt` is recent enough; the feed itself does not. This interface does not promise
-    /// that the call succeeds: a feed may revert, for example one that has no price yet. When it
-    /// does, the call that read it reverts too, because the order contract does not catch it.
+    /// that the call succeeds: a feed may revert. When it does, the call that read it reverts too,
+    /// because the order contract does not catch it.
     /// @return roundId The round ID.
     /// @return answer The price, with `decimals()` decimals.
     /// @return startedAt Timestamp of when the round started.
