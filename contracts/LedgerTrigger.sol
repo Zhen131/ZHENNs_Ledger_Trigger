@@ -469,8 +469,8 @@ contract LedgerTrigger is ReentrancyGuard {
     /// then to the wanted amount, and a revert in those two calls is passed on. A USDC transfer that
     /// returns something other than true, such as false, instead of reverting, or an approval that
     /// returns false when tried again, makes the fill revert with `SafeERC20FailedOperation`. Any
-    /// rejection undoes the whole call: the order stays `Open` and no USDC or ETH moves. The
-    /// minimum ETH output, in wei, is the larger of
+    /// rejection undoes the whole call: the order keeps the status it had, and no USDC or ETH
+    /// moves. The minimum ETH output, in wei, is the larger of
     /// `usdcAmount * 10^k / targetPrice` (never pay more than the target price) and
     /// `usdcAmount * 10^k * (10000 - maxSlippageBps) / (price * 10000)` (never get much less than
     /// the feed price gives), each worked out in full and rounded down once, with
