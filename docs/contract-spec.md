@@ -215,7 +215,7 @@ stateDiagram-v2
     Cancelled --> [*]
 ```
 
-- `Open -> Filled` needs all four: the caller is the owner or the executor; the price feed reports a valid, recent price at or below the target ("price met"); the order has not expired; and the owner's USDC balance and allowance both cover the order amount ("USDC enough"). These four are needed but not enough on their own: the swap must also go through, taking exactly the order amount and bringing in at least the minimum ETH output, and the ETH must reach the recipient (Appendix A). If either fails, the fill is rejected and the order stays `Open`.
+- `Open -> Filled` needs all four: the caller is the owner or the executor; the price feed reports a valid, recent price at or below the target ("price met"); the order has not expired; and the owner's USDC balance and allowance both cover the order amount ("USDC enough"). These four are needed but not enough on their own: the USDC token must also let the transfer from the owner and the approvals of the swap venue go through; the swap must go through, taking exactly the order amount and bringing in at least the minimum ETH output; and the ETH must reach the recipient (Appendix A). If any of these fails, the fill is rejected and the order stays `Open`.
 - Final states: `Filled` and `Cancelled`. An order can never be both filled and cancelled.
 - `Expired` is not a stored state. In storage an expired order is still `Open`, so **it still takes one of its owner's open-order slots until the owner cancels it**. It can no longer be filled.
 - When a fill and a cancel of the same order are sent at the same time, whichever the chain includes first takes effect, and the other is rejected.
