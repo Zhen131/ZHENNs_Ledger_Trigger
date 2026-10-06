@@ -48,7 +48,8 @@ contract ShortChangingSwapVenue is ISwapVenue {
     receive() external payable {}
 
     /// @notice Picks how the venue cheats from now on.
-    /// @dev Anyone can call it; it never reverts.
+    /// @dev Anyone can call it. It never reverts for one of the three modes in `Mode`, whatever
+    /// `newEthToPay` is; a mode number outside `Mode` reverts with no error data.
     /// @param newMode The mode.
     /// @param newEthToPay ETH, in wei, to pay per swap in `PayGivenAmount` mode.
     function setMode(Mode newMode, uint256 newEthToPay) external {
