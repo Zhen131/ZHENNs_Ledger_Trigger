@@ -104,7 +104,7 @@ If an address is wrong (for example a mainnet address), the script stops before 
 The swap venue pays each fill out of ETH sent to it beforehand. **[Not run on Sepolia]**
 
 - **The mock swap venue is open to everyone.** Anyone can swap test USDC for the ETH in it. Send only what your demo needs, and do the demo right after.
-- One order buys `amount ÷ price` ETH. For 2 USDC at 2500 USD, that is 0.0008 ETH. **The ETH an order buys must be less than the ETH in the venue, or the fill fails.** `canFill` does not check this.
+- One order buys `amount ÷ price` ETH. For 2 USDC at 2500 USD, that is 0.0008 ETH. **The venue must hold at least the ETH an order buys, or the fill fails.** `canFill` does not check this.
 - So keep orders small: a few USDC.
 
 ```sh
