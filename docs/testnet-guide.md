@@ -221,7 +221,7 @@ Take these:
 6. That fill transaction on the block explorer: its Logs tab, and the ETH sent to the recipient. Until the contract's source is verified on the block explorer (a later step, not in this guide), the Logs tab shows the event as hexadecimal topics and data rather than by the name `OrderFilled`; that is expected.
 7. Optional: the terminal output of `npm run cancel-order`.
 
-A rejected call (for example a fill when the price is above the target) never reaches the chain: the node refuses it before it is sent. Its screenshot is the terminal line with the error name.
+A call the contract would reject at that moment (for example a fill while the price is above the target, or cancelling an order that is already filled) does not reach the chain: `place-order` and `cancel-order` check the call with the node before sending it, and the keeper asks `canFill` and simulates each fill first, so nothing is sent and the terminal says why. That terminal line is its screenshot. Only when the order changes between that check and the moment the transaction is mined, for example when its owner cancels it just as the keeper sends the fill, is the transaction mined and fails on chain, and the keeper skips the order.
 
 ## 9. When something goes wrong
 
