@@ -259,14 +259,16 @@ The web page does six things with a `LedgerTrigger` deployed on a local Hardhat 
 
 The page reads everything from the local node at `http://127.0.0.1:8545`, never through the wallet. The wallet, such as MetaMask, only gives the account and signs the transactions. The page accepts another node only on this computer: `?rpc=http://localhost:8545` in the address bar works, any other host is refused. Each call that would change something is first simulated on the node: if the contract would reject it, the page shows the contract's error, such as `PriceAboveTarget(price: 2000.00, targetPrice: 1500.00)`, and the wallet is not asked at all.
 
-**1. Start a local node and deploy**, as in steps 1 and 2 of "Deploy and operate on a local chain" above:
+You need three terminals, each opened in the repository folder: the first runs the node, the second runs the page, and the third is for the commands of step 6. The first two keep running until you are done.
+
+**1. Start a local node and deploy**, with the same commands as steps 1 and 2 of "Deploy and operate on a local chain" above. In the first terminal, start the node and leave it running:
 
 ```sh
 export HARDHAT_DISABLE_TELEMETRY=true
 npx hardhat node
 ```
 
-and, in a second terminal in the repository folder:
+and, in the second terminal:
 
 ```sh
 export HARDHAT_DISABLE_TELEMETRY=true
@@ -276,7 +278,7 @@ npm run deploy:mocks -- --network localhost
 
 You should see `Started HTTP and WebSocket JSON-RPC server at http://127.0.0.1:8545/` in the first terminal, and the `LedgerTrigger` address in the second. Keep the node running.
 
-**2. Start the page.** In the second terminal:
+**2. Start the page.** In the second terminal, once the deployment has finished, start the page and leave it running:
 
 ```sh
 npm run web
@@ -296,9 +298,10 @@ You should see account #0 in MetaMask with about 9990 ETH: the deployment stocke
 
 **5. Place an order**: Amount `100`, Target price `1500`, Valid for `60` minutes, Recipient the address of account #2, Executor the address of account #1 (the keeper's account). Press "Place order". The first time, MetaMask asks twice: first to approve the USDC, then to place the order. You should see `Approve USDC: Confirmed in block …` and `Place order: Confirmed in block …`, and the order under "My orders" as `Open · waiting: PriceAboveTarget`, with a pulsing dot. The allowance is only raised when it is too small for your open orders plus this one, so a later order may need only one confirmation.
 
-**6. Let the keeper fill it.** In the second terminal, move the mock price to the target and run the keeper once (steps 4 and 5 of "Deploy and operate on a local chain" explain each variable):
+**6. Let the keeper fill it.** In a third terminal in the repository folder, move the mock price to the target and run the keeper once (steps 4 and 5 of "Deploy and operate on a local chain" explain each variable):
 
 ```sh
+export HARDHAT_DISABLE_TELEMETRY=true
 export TRIGGER_CONTRACT_ADDRESS=<LedgerTrigger address printed in step 1>
 export TRIGGER_PRICE_USD=1500
 npm run set-price -- --network localhost
@@ -316,8 +319,8 @@ The other buttons: **Cancel** cancels an `Open` or `Expired` order of yours. **F
 
 Good to know:
 
-- The mock price counts as stale 75 minutes after it was set (`maxPriceAge`): orders then show `Open · waiting: StalePrice`. Run `set-price` again.
-- After restarting the node, everything on the old chain is gone: deploy again and press Load (on a fresh node the address is usually the same as before). MetaMask still counts the old chain's transactions and sends the next one with a wrong number (nonce), which the node refuses. Clear them in MetaMask: open Settings, then Advanced, and press the button that clears the account's activity and nonce data ("Reset account" in MetaMask's developer documentation; some versions call it "Clear activity tab data").
+- The mock price counts as stale 75 minutes after it was set (`maxPriceAge`): orders then show `Open · waiting: StalePrice`. Run `set-price` again in the third terminal.
+- After restarting the node in the first terminal, everything on the old chain is gone: deploy again in the third terminal and press Load (on a fresh node the address is usually the same as before). MetaMask still counts the old chain's transactions and sends the next one with a wrong number (nonce), which the node refuses. Clear them in MetaMask: open Settings, then Advanced, and press the button that clears the account's activity and nonce data ("Reset account" in MetaMask's developer documentation; some versions call it "Clear activity tab data").
 - `npm run web:build` builds the page into `web/dist/`, and `npm run web:preview` serves that build at `http://localhost:4173/`.
 
 **The development page** `http://localhost:5173/dev.html` is for development and checks only; for a demonstration, open the real page with MetaMask. It loads a stand-in wallet that passes every request to the local node, which signs with its own unlocked test accounts: the stand-in holds no key. `?account=N` picks test account N (default 0), `?reject=1` makes it refuse every transaction as if the user said no, and `?switchTo=N` switches to account N 3 seconds after connecting, as a wallet does when the user picks another account. It works only with Hardhat's local chain, and it does not install itself when the browser already has a wallet.
