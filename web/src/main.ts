@@ -20,6 +20,7 @@ import {
 } from "./lib/session.ts";
 import { PAGE_MARKUP } from "./markup.ts";
 import { refreshMetrics, resetMyBalances } from "./metrics.ts";
+import { initOrderForm, isPlacing, resetOrderMessage } from "./orderForm.ts";
 import { sendBlocker, type Page } from "./page.ts";
 import {
   findWallet,
@@ -81,7 +82,7 @@ function updateControls(): void {
   byId("wallet-status").title = account ?? "";
   const blocker = sendBlocker(page);
   const submit = byId<HTMLButtonElement>("order-submit");
-  submit.disabled = blocker !== undefined;
+  submit.disabled = blocker !== undefined || isPlacing();
   setText(byId("order-hint"), blocker ?? "");
 }
 
@@ -167,6 +168,7 @@ byId("contract-form").addEventListener("submit", (event) => {
 
 function applyResets(resets: readonly ResetName[]): void {
   if (resets.includes(Reset.MyBalances)) resetMyBalances();
+  if (resets.includes(Reset.FormMessage)) resetOrderMessage();
 }
 
 function applyAccounts(accounts: readonly unknown[]): void {
@@ -229,7 +231,7 @@ if (page.wallet !== undefined) {
 // Start.
 // ---------------------------------------------------------------------------
 
-byId("order-recipient").addEventListener("change", () => void refresh());
+initOrderForm(page, updateControls);
 
 updateControls();
 if (!rpc.ok) {
