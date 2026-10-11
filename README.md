@@ -259,7 +259,7 @@ The web page does six things with a `LedgerTrigger` deployed on a local Hardhat 
 
 The page reads everything from the local node at `http://127.0.0.1:8545`, never through the wallet. The wallet, such as MetaMask, only gives the account and signs the transactions. The page accepts another node only on this computer: `?rpc=http://localhost:8545` in the address bar works, any other host is refused. Each call that would change something is first simulated on the node: if the contract would reject it, the page shows the contract's error, such as `PriceAboveTarget(price: 2000.00, targetPrice: 1500.00)`, and the wallet is not asked at all.
 
-You need three terminals, each opened in the repository folder: the first runs the node, the second runs the page, and the third is for the commands of step 6. The first two keep running until you are done.
+You need three terminals, each opened in the repository folder: the first runs the node, the second runs the page, and the third is for the commands from step 6 on. The first two keep running until you are done.
 
 **1. Start a local node and deploy**, with the same commands as steps 1 and 2 of "Deploy and operate on a local chain" above. In the first terminal, start the node and leave it running:
 
