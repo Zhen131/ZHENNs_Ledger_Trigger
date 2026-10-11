@@ -61,6 +61,8 @@ export type OrderRow = {
   readonly targetPrice: string;
   /** Last second, in Unix time, at which the order is valid. */
   readonly expiry: bigint;
+  /** `statusOf`: an OrderStatus value. */
+  readonly statusValue: number;
   readonly status: StatusView;
   readonly actions: OrderActions;
 };
@@ -98,6 +100,7 @@ export function orderRow(
     amount: formatAmount(snapshot.order.usdcAmount, decimals.usdc),
     targetPrice: formatAmount(snapshot.order.targetPrice, decimals.price),
     expiry: snapshot.order.expiry,
+    statusValue: snapshot.status,
     status: statusView(snapshot.status, snapshot.check),
     actions: actionsFor(snapshot.status),
   };
@@ -134,4 +137,18 @@ export function approvalFor(
 ): { readonly needed: boolean; readonly allowance: bigint } {
   const target = openOrderTotal + amount;
   return { needed: allowance < target, allowance: target };
+}
+
+/**
+ * Whether the red message under an order's row goes away now. The message
+ * says why the contract refused a call while the order had status `shownAt`
+ * (a `statusOf` value, undefined when no message is shown). Once the order's
+ * status is another one, `now`, such as Filled after Open, the message no
+ * longer fits what the row shows, so it goes.
+ */
+export function clearsRowMessage(
+  shownAt: number | undefined,
+  now: number,
+): boolean {
+  return shownAt !== undefined && shownAt !== now;
 }

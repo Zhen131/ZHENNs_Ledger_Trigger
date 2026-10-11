@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { FillBlocker, OrderStatus } from "../keeper/names.ts";
 import {
   approvalFor,
+  clearsRowMessage,
   isMine,
   myOrderIds,
   myOrderRows,
@@ -213,5 +214,40 @@ describe("web approval: approve only when the allowance falls short", () => {
       needed: false,
       allowance: 200n,
     });
+  });
+});
+
+describe("web row message: a refusal goes once the order's status changes", () => {
+  it("goes when the order leaves Open: Filled, Cancelled or Expired", () => {
+    for (const now of [
+      OrderStatus.Filled,
+      OrderStatus.Cancelled,
+      OrderStatus.Expired,
+    ]) {
+      assert.equal(clearsRowMessage(OrderStatus.Open, now), true, String(now));
+    }
+  });
+
+  it("stays while the status is the same, even if the reason to wait changed", () => {
+    assert.equal(clearsRowMessage(OrderStatus.Open, OrderStatus.Open), false);
+    assert.equal(
+      clearsRowMessage(OrderStatus.Expired, OrderStatus.Expired),
+      false,
+    );
+  });
+
+  it("nothing to clear when no message is shown", () => {
+    assert.equal(clearsRowMessage(undefined, OrderStatus.Filled), false);
+  });
+
+  it("each row carries the statusOf value it was built from", () => {
+    assert.equal(
+      orderRow(snapshot(1n, ME, OrderStatus.Open), ME, DECIMALS).statusValue,
+      OrderStatus.Open,
+    );
+    assert.equal(
+      orderRow(snapshot(1n, ME, OrderStatus.Filled), ME, DECIMALS).statusValue,
+      OrderStatus.Filled,
+    );
   });
 });

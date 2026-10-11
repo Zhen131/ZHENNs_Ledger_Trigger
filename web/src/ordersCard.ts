@@ -13,6 +13,7 @@ import { byId, formatDateTime, make, setShown, setText } from "./dom.ts";
 import { InputError, parseWhole } from "./lib/amounts.ts";
 import { OrderStatus } from "../../keeper/names.ts";
 import {
+  clearsRowMessage,
   myOrderIds,
   myOrderRows,
   orderRow,
@@ -54,6 +55,8 @@ type RowParts = {
   readonly message: HTMLElement;
   readonly step: TxStep;
   busy: boolean;
+  /** The order's status when the red message was shown, if one is shown. */
+  messageShownAt: number | undefined;
 };
 
 const snapshots = new Map<bigint, OrderSnapshot>();
@@ -133,6 +136,7 @@ function createRow(page: Page, orderId: bigint): RowParts {
     message,
     step: createStep(stepLine),
     busy: false,
+    messageShownAt: undefined,
   };
   fill.addEventListener("click", () => void act(page, parts, Action.Fill));
   cancel.addEventListener("click", () => void act(page, parts, Action.Cancel));
@@ -144,13 +148,25 @@ function updateNote(parts: RowParts): void {
   setShown(parts.note, shown);
 }
 
-function showRowMessage(parts: RowParts, text: string | undefined): void {
+/**
+ * Shows the red message under a row, or clears it. `status` is the order's
+ * status the message is about; the message goes once that changes.
+ */
+function showRowMessage(
+  parts: RowParts,
+  text: string | undefined,
+  status?: number,
+): void {
+  parts.messageShownAt = text === undefined ? undefined : status;
   setShown(parts.message, text !== undefined);
   setText(parts.message, text ?? "");
   updateNote(parts);
 }
 
 function updateRow(page: Page, parts: RowParts, row: OrderRow): void {
+  if (clearsRowMessage(parts.messageShownAt, row.statusValue)) {
+    showRowMessage(parts, undefined);
+  }
   setShown(parts.badge, !row.mine);
   setText(parts.amount, row.amount);
   setText(parts.target, row.targetPrice);
@@ -211,6 +227,7 @@ async function act(
       showRowMessage(
         parts,
         failure.kind === "error" ? failure.text : "Not sent.",
+        snapshots.get(parts.orderId)?.status,
       );
       return;
     }
