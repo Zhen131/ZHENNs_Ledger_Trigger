@@ -18,7 +18,11 @@
     "cancel-order": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/cancel-order.ts",
     "fund-venue": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/fund-venue.ts",
     "order-status": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/order-status.ts",
-    "set-price": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/set-price.ts"
+    "set-price": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/set-price.ts",
+    "web": "vite",
+    "web:build": "vite build",
+    "web:preview": "vite preview",
+    "web:types": "tsc -p web/tsconfig.json"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox-viem": "^5.0.7",
@@ -29,6 +33,7 @@
     "prettier-plugin-solidity": "^2.4.1",
     "solhint": "^6.2.4",
     "typescript": "^7.0.2",
-    "viem": "^2.57.3"
+    "viem": "^2.57.3",
+    "vite": "^8.3.4"
   }
 }

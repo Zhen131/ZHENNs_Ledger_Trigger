@@ -10,6 +10,9 @@
 # TypeScript output
 /dist
 
+# Web page build output
+/web/dist
+
 # Environment files must never be committed: every name starting with .env
 .env*
 
