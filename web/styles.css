@@ -566,7 +566,6 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  white-space: nowrap;
 }
 
 .status-waiting {
@@ -613,9 +612,17 @@ a {
   }
 }
 
+.order-id {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .badge {
-  display: inline-block;
-  margin-left: 8px;
+  display: block;
+  width: fit-content;
+  margin-top: 4px;
+  font-family: var(--font-sans);
   padding: 1px 8px;
   border-radius: 999px;
   background: var(--surface-muted);

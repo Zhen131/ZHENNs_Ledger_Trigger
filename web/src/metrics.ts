@@ -95,3 +95,14 @@ export async function refreshMetrics(page: Page): Promise<void> {
 export function resetMyBalances(): void {
   setText(byId("metric-usdc"), "—");
 }
+
+/** Clears all three figures, while no contract is loaded. */
+export function resetMetrics(): void {
+  lastEth = undefined;
+  setText(byId("metric-price"), "—");
+  setText(byId("metric-price-note"), "Load the contract to read the price");
+  resetMyBalances();
+  setText(byId("metric-usdc-note"), "Load the contract to see it");
+  setText(byId("metric-eth"), "—");
+  setText(byId("metric-eth-note"), "Load the contract to see it");
+}

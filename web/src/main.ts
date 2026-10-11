@@ -26,7 +26,7 @@ import {
   type ResetName,
 } from "./lib/session.ts";
 import { PAGE_MARKUP } from "./markup.ts";
-import { refreshMetrics, resetMyBalances } from "./metrics.ts";
+import { refreshMetrics, resetMetrics, resetMyBalances } from "./metrics.ts";
 import { initOrderForm, isPlacing, resetOrderMessage } from "./orderForm.ts";
 import {
   initOrders,
@@ -51,11 +51,25 @@ byId("app").innerHTML = PAGE_MARKUP;
 
 const notice = byId("page-notice");
 
-/** Shows a sentence under the contract and wallet bar, or hides it. */
-function showNotice(text: string | undefined, tone = "warning"): void {
+/** What is wrong right now, by source; each is cleared once it is fixed. */
+const problems: {
+  settings?: string | undefined;
+  node?: string | undefined;
+  contract?: string | undefined;
+  wallet?: string | undefined;
+} = {};
+
+/**
+ * Shows the most important problem under the contract and wallet bar, or
+ * hides the line: an error with the settings, the node or the contract
+ * first, then the wallet, then the wallet's chain.
+ */
+function renderNotice(): void {
+  const error = problems.settings ?? problems.node ?? problems.contract;
+  const text = error ?? problems.wallet ?? page.chainProblem;
   setShown(notice, text !== undefined);
   setText(notice, text ?? "");
-  notice.className = `notice notice-${tone}`;
+  notice.className = `notice notice-${error === undefined ? "warning" : "error"}`;
 }
 
 const rpc = rpcUrlFrom(window.location.search);
@@ -115,11 +129,13 @@ async function refreshOnce(): Promise<void> {
     const block = await page.reader.getBlock({ blockTag: "latest" });
     page.latest = { number: block.number, time: block.timestamp };
   } catch {
-    showNotice(
-      `The local node at ${page.rpcUrl} does not answer. Start it with npx hardhat node.`,
-      "error",
-    );
+    problems.node = `The local node at ${page.rpcUrl} does not answer. Start it with npx hardhat node.`;
+    renderNotice();
     return;
+  }
+  if (problems.node !== undefined) {
+    problems.node = undefined;
+    renderNotice();
   }
   await refreshMetrics(page);
   let pulled;
@@ -177,14 +193,17 @@ async function loadContract(text: string): Promise<void> {
   const result = await loadTrigger(page.reader, text);
   if (!result.ok) {
     page.trigger = undefined;
-    showNotice(result.message, "error");
+    resetMetrics();
+    problems.contract = result.message;
+    renderNotice();
     updateControls();
     return;
   }
   page.trigger = result.trigger;
   remember(CONTRACT_KEY, result.trigger.address);
   byId<HTMLInputElement>("contract-input").value = result.trigger.address;
-  showNotice(page.chainProblem);
+  problems.contract = undefined;
+  renderNotice();
   updateControls();
   await refresh();
 }
@@ -228,7 +247,7 @@ async function checkWalletChain(chainId?: unknown): Promise<void> {
     page.chainProblem =
       "The wallet's chain or the local node's chain could not be read.";
   }
-  showNotice(page.chainProblem);
+  renderNotice();
   updateControls();
 }
 
@@ -239,13 +258,14 @@ async function connect(): Promise<void> {
     applyAccounts(await requestAccounts(wallet));
   } catch (error) {
     const code = (error as { code?: unknown }).code;
-    showNotice(
+    problems.wallet =
       code === 4001
         ? "You did not connect the wallet."
-        : "The wallet did not connect.",
-    );
+        : "The wallet did not connect.";
+    renderNotice();
     return;
   }
+  problems.wallet = undefined;
   await checkWalletChain();
 }
 
@@ -272,7 +292,8 @@ initOrders(page);
 
 updateControls();
 if (!rpc.ok) {
-  showNotice(rpc.message, "error");
+  problems.settings = rpc.message;
+  renderNotice();
 } else {
   const fromAddress = new URLSearchParams(window.location.search).get(
     "contract",

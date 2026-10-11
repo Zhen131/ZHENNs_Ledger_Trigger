@@ -24,6 +24,11 @@ if (page["ethereum"] !== undefined) {
     show(
       `Development page: the stand-in wallet acts as test account #${parsed.options.accountIndex} of the local node${parsed.options.reject ? " and rejects every transaction" : ""}. It holds no key; the node signs.`,
     );
+    standIn.on("accountsChanged", () => {
+      show(
+        `Development page: the stand-in wallet switched to test account #${parsed.options.switchTo ?? "?"} of the local node. It holds no key; the node signs.`,
+      );
+    });
     standIn.checkChain().catch((error: unknown) => {
       show(
         `Development page: ${error instanceof Error ? error.message : String(error)}`,

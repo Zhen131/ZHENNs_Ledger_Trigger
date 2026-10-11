@@ -74,7 +74,7 @@ function createRow(page: Page, orderId: bigint): RowParts {
   const main = make("tr", "order-row");
   const note = make("tr", "note-row");
   const cell = (className = "") => make("td", className);
-  const idCell = cell("mono");
+  const idCell = cell("order-id");
   const id = make("span", "", `#${orderId}`);
   const badge = make("span", "badge", "not yours");
   idCell.append(id, badge);
