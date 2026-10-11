@@ -31,11 +31,13 @@ The contract `LedgerTrigger` promises five things. [docs/contract-spec.md](docs/
 | `scripts/`                    | The checks, the demo, the deployment and operation scripts, the confirmation gate and the network guard                                                        |
 | `scripts/cli/`                | The entry points that the `npm run` commands start                                                                                                             |
 | `web/`                        | The web page: its markup, styles and TypeScript, and a development page with a stand-in wallet; Vite builds it (`vite.config.ts`)                              |
-| `docs/`                       | The contract specification, the test matrix and the Sepolia guide                                                                                              |
+| `docs/`                       | The project specification, the demo script and their screenshots (`docs/img/`), the contract specification, the test matrix and the Sepolia guide              |
 | `hardhat.config.ts`           | Hardhat's configuration: the Solidity version, the network guard and the `sepolia` network                                                                     |
 
 ## Documents
 
+- [docs/project-specification.md](docs/project-specification.md): the project for a first-time reader: the problem and the design, then roles, functions, data structures, security rules, the state machine, the test scenarios, where to look for each grading point, and how to run it.
+- [docs/demo-script.md](docs/demo-script.md): a live demonstration in under ten minutes on a local chain, with the web page and a terminal: what to do, what you should see and what to do if it goes wrong, step by step.
 - [docs/contract-spec.md](docs/contract-spec.md): what the contract guarantees and how: roles and permissions, functions, data structures, security rules, the state machine and the test scenarios, then the steps of a fill, the parts around the contract and the design choices.
 - [docs/test-matrix.md](docs/test-matrix.md): which tests cover each of the 26 test scenarios, and other important tests.
 - [docs/testnet-guide.md](docs/testnet-guide.md): how to deploy on the Sepolia test network, place an order and let the keeper fill it.
