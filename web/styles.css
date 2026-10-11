@@ -216,8 +216,6 @@ a {
 
 .message-error {
   margin-top: 12px;
-  font-family: var(--font-mono);
-  font-size: 13px;
   overflow-wrap: anywhere;
 }
 
@@ -357,8 +355,6 @@ a {
 
 .button-small {
   padding: 6px 12px;
-  border-radius: 10px;
-  font-size: 13px;
 }
 
 .button-danger {
@@ -459,8 +455,6 @@ a {
 
 .tx-error .tx-text {
   color: var(--danger);
-  font-family: var(--font-mono);
-  font-size: 13px;
 }
 
 .tx-declined .tx-text {

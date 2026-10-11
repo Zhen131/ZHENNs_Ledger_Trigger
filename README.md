@@ -14,9 +14,9 @@ The contract `LedgerTrigger` promises five things. [docs/contract-spec.md](docs/
 
 ## Where it stands
 
-- Everything in this repository is built and runs on a local Hardhat chain: the contracts and their tests, the keeper, a demo of six scenarios, and the deployment and operation scripts. `npm run check` runs every check.
+- Everything in this repository is built and runs on a local Hardhat chain: the contracts and their tests, the keeper, a demo of six scenarios, the deployment and operation scripts, and a web page. `npm run check` runs every check.
 - **Nothing has been deployed to a public network yet.** The scripts can deploy to the Sepolia test network, and [docs/testnet-guide.md](docs/testnet-guide.md) gives the steps, but that needs a wallet with test ETH and a node service, and it has not been done.
-- No license has been chosen yet.
+- The code is released under the MIT License (see "License" below).
 
 ## What is where
 
@@ -30,6 +30,7 @@ The contract `LedgerTrigger` promises five things. [docs/contract-spec.md](docs/
 | `keeper/`                     | The keeper                                                                                                                                                     |
 | `scripts/`                    | The checks, the demo, the deployment and operation scripts, the confirmation gate and the network guard                                                        |
 | `scripts/cli/`                | The entry points that the `npm run` commands start                                                                                                             |
+| `web/`                        | The web page: its markup, styles and TypeScript, and a development page with a stand-in wallet; Vite builds it (`vite.config.ts`)                              |
 | `docs/`                       | The contract specification, the test matrix and the Sepolia guide                                                                                              |
 | `hardhat.config.ts`           | Hardhat's configuration: the Solidity version, the network guard and the `sepolia` network                                                                     |
 
@@ -67,15 +68,17 @@ export HARDHAT_DISABLE_TELEMETRY=true
 npm run check
 ```
 
-This runs seven steps in order and stops at the first one that fails, naming it:
+This runs nine steps in order and stops at the first one that fails, naming it:
 
 1. `format`: Prettier checks the formatting of Solidity, TypeScript, JSON and Markdown files.
 2. `lint`: Solhint checks the contracts, including that every contract, function, event and public value has its documentation comment; warnings count as failures.
 3. `compile`: Hardhat compiles the contracts with the pinned Solidity version (0.8.34).
-4. `types`: the TypeScript compiler type-checks the configuration, the scripts, the keeper and the tests.
-5. `test`: Hardhat runs every test in `test/`; contract tests get a fresh in-process chain each time. Two guards keep the tests from sending anything to another chain. First, `npx hardhat test` and `npm run check` stop before any test runs when the selected network is not Hardhat's local chain (chain ID 31337) (`scripts/testNetworkGuard.ts`). Second, a network guard (`scripts/networkGuard.ts`, which `hardhat.config.ts` loads as a Hardhat network hook) sees every request that goes through one of Hardhat's network connections, however the code was started (`npx hardhat test`, `npm run check`, `node --test`, `node <file>`, `npx hardhat run <file>`, with `--network` or the `HARDHAT_NETWORK` environment variable). It lets everything through on a connection to Hardhat's in-process chain, whatever chain ID that chain reports: that chain lives inside the running process, so nothing sent to it leaves the computer. On a connection to a node, such as `npx hardhat node` or a node service, it lets plain reads through, and a request that would write, such as sending a transaction, deploying or signing, only in two cases: the node serves Hardhat's local chain (chain ID 31337), or a deployment or operation script has opened that very connection by passing its confirmation gate (see "The confirmation gate" below). Any other request that would write is refused with an error that says why. So the guard covers exactly this: requests that would write, sent through Hardhat's connections to a node that serves another chain. It does not see programs that talk to a node without Hardhat, such as the keeper.
-6. `scenarios`: `scripts/scenarios.ts` checks that each of the 26 test scenarios, S01 to S26, has at least one test whose own title starts with its number, and that [docs/test-matrix.md](docs/test-matrix.md) matches the tests: a row for each scenario, every title it names is a real test in the file it names, and every scenario test is listed. Run `node scripts/scenarios.ts --list` to see which tests cover which scenario.
-7. `hygiene`: `scripts/hygiene.ts` scans the repository files and commit history for things that must never be committed, such as key material, files whose names start with `.env`, or forbidden contract patterns.
+4. `types`: the TypeScript compiler type-checks the configuration (Hardhat's and Vite's), the scripts, the keeper and the tests, and through the tests the web page's logic.
+5. `web-types`: the TypeScript compiler type-checks all of the web page (`web/`), with the browser's types.
+6. `web-build`: Vite builds the web page into `web/dist/`. It reads the contract interfaces from the build output, so it runs after `compile`.
+7. `test`: Hardhat runs every test in `test/`; contract tests get a fresh in-process chain each time. Two guards keep the tests from sending anything to another chain. First, `npx hardhat test` and `npm run check` stop before any test runs when the selected network is not Hardhat's local chain (chain ID 31337) (`scripts/testNetworkGuard.ts`). Second, a network guard (`scripts/networkGuard.ts`, which `hardhat.config.ts` loads as a Hardhat network hook) sees every request that goes through one of Hardhat's network connections, however the code was started (`npx hardhat test`, `npm run check`, `node --test`, `node <file>`, `npx hardhat run <file>`, with `--network` or the `HARDHAT_NETWORK` environment variable). It lets everything through on a connection to Hardhat's in-process chain, whatever chain ID that chain reports: that chain lives inside the running process, so nothing sent to it leaves the computer. On a connection to a node, such as `npx hardhat node` or a node service, it lets plain reads through, and a request that would write, such as sending a transaction, deploying or signing, only in two cases: the node serves Hardhat's local chain (chain ID 31337), or a deployment or operation script has opened that very connection by passing its confirmation gate (see "The confirmation gate" below). Any other request that would write is refused with an error that says why. So the guard covers exactly this: requests that would write, sent through Hardhat's connections to a node that serves another chain. It does not see programs that talk to a node without Hardhat, such as the keeper.
+8. `scenarios`: `scripts/scenarios.ts` checks that each of the 26 test scenarios, S01 to S26, has at least one test whose own title starts with its number, and that [docs/test-matrix.md](docs/test-matrix.md) matches the tests: a row for each scenario, every title it names is a real test in the file it names, and every scenario test is listed. Run `node scripts/scenarios.ts --list` to see which tests cover which scenario.
+9. `hygiene`: `scripts/hygiene.ts` scans the repository files and commit history for things that must never be committed, such as key material, files whose names start with `.env`, or forbidden contract patterns.
 
 The very first run downloads the Solidity compiler once. After that the checks need no network access, and Hardhat runs with telemetry disabled.
 
@@ -212,7 +215,7 @@ I am sending real transactions to a public network
 
 Even then, only `deploy:external`, `place-order`, `cancel-order` and `fund-venue` go ahead. The demo, `deploy:mocks` and `set-price` never run on another chain.
 
-When the gate lets a script send on a chain that is not local, it opens the one Hardhat network connection the script uses: it sends a single-use token over that connection, and the network guard (see "Run the checks", step 5) answers it, checks that the connection's own node serves the chain the gate decided on, and from then on lets requests that write through on that connection only. Any other connection, even one to the same chain, stays closed. Deciding alone (`passSendGate`) opens nothing, so a stand-in client that only reports a chain ID cannot open anything, and no environment variable or setting can.
+When the gate lets a script send on a chain that is not local, it opens the one Hardhat network connection the script uses: it sends a single-use token over that connection, and the network guard (see "Run the checks", step 7) answers it, checks that the connection's own node serves the chain the gate decided on, and from then on lets requests that write through on that connection only. Any other connection, even one to the same chain, stays closed. Deciding alone (`passSendGate`) opens nothing, so a stand-in client that only reports a chain ID cannot open anything, and no environment variable or setting can.
 
 So what the gate and the guard stop is a request that would write, sent through one of Hardhat's network connections to a node that serves a chain other than Hardhat's local chain, on a connection the gate has not opened. They do not make every mistake impossible: with the confirmation sentence set, the four scripts above do send, to whichever chain the selected network serves, and a program that does not use Hardhat's network connections is not covered at all. The keeper is such a program: it does not pass through the gate or the guard, and sends to whichever node its own settings name.
 
@@ -250,6 +253,75 @@ npm run keeper             # keep running: a round, a pause, another round, unti
 
 It logs one line per event to standard output: the time, the order ID, what it did and why. Before its first round it gets ready: it checks the settings, reads the contract interfaces, asks the node for its chain ID and checks that there is contract code at the address. In `--once` mode it exits with code 1 when getting ready fails or when anything in the round was an error, such as a node that could not be reached or that reported an error that is not a contract revert; a skipped order is not an error. While it keeps running, every error, getting ready included, is logged and the next round runs as usual.
 
+## Run the web page
+
+The web page does six things with a `LedgerTrigger` deployed on a local Hardhat node: connect a wallet, show the ETH / USD price and the balances, approve and place an order, list your orders (and look up any order by its number), cancel an order, and fill an order now. Below them, a list shows the contract's latest events, everyone's. Each transaction shows its steps: waiting for the wallet, then waiting for the block (a small spinner), then confirmed.
+
+The page reads everything from the local node at `http://127.0.0.1:8545`, never through the wallet. The wallet, such as MetaMask, only gives the account and signs the transactions. The page accepts another node only on this computer: `?rpc=http://localhost:8545` in the address bar works, any other host is refused. Each call that would change something is first simulated on the node: if the contract would reject it, the page shows the contract's error, such as `PriceAboveTarget(price: 2000.00, targetPrice: 1500.00)`, and the wallet is not asked at all.
+
+**1. Start a local node and deploy**, as in steps 1 and 2 of "Deploy and operate on a local chain" above:
+
+```sh
+export HARDHAT_DISABLE_TELEMETRY=true
+npx hardhat node
+```
+
+and, in a second terminal in the repository folder:
+
+```sh
+export HARDHAT_DISABLE_TELEMETRY=true
+npx hardhat build
+npm run deploy:mocks -- --network localhost
+```
+
+You should see `Started HTTP and WebSocket JSON-RPC server at http://127.0.0.1:8545/` in the first terminal, and the `LedgerTrigger` address in the second. Keep the node running.
+
+**2. Start the page.** In the second terminal:
+
+```sh
+npm run web
+```
+
+You should see `Local: http://localhost:5173/`. Open `http://localhost:5173/?contract=<address>` in the browser, with the `LedgerTrigger` address from step 1 in place of `<address>`, or open `http://localhost:5173/` and paste the address into "Contract address", then press Load. The browser remembers the address. You should see the ETH / USD price, `2000.00`, and the event list. Without a wallet, the page still shows the price and the events and can look up orders; the buttons that send transactions stay grey and say "No wallet found in this browser".
+
+**3. Set up MetaMask** (once). Use a browser profile that holds no real wallet, and MetaMask only for this.
+
+1. Add the local network by hand: network name `Hardhat local` (any name will do), RPC URL `http://127.0.0.1:8545`, chain ID `31337`, currency symbol `ETH`.
+2. Import test account #0 with its private key, printed by `npx hardhat node`. The test accounts and their keys are public, the same on every computer: never send real money to them, and never import them into a wallet that holds real money.
+3. Switch MetaMask to the local network.
+
+You should see account #0 in MetaMask with about 9990 ETH: the deployment stocked the swap venue with 10 ETH and paid a little gas.
+
+**4. Connect.** Press "Connect wallet" and accept in MetaMask. You should see the short address, `0xf39F…2266`, and `chain 31337`, and "My USDC" shows `1000.00`. If the wallet is on another chain, the page says so and keeps the buttons that send transactions grey; it never switches the wallet's chain itself.
+
+**5. Place an order**: Amount `100`, Target price `1500`, Valid for `60` minutes, Recipient the address of account #2, Executor the address of account #1 (the keeper's account). Press "Place order". The first time, MetaMask asks twice: first to approve the USDC, then to place the order. You should see `Approve USDC: Confirmed in block …` and `Place order: Confirmed in block …`, and the order under "My orders" as `Open · waiting: PriceAboveTarget`, with a pulsing dot. The allowance is only raised when it is too small for your open orders plus this one, so a later order may need only one confirmation.
+
+**6. Let the keeper fill it.** In the second terminal, move the mock price to the target and run the keeper once (steps 4 and 5 of "Deploy and operate on a local chain" explain each variable):
+
+```sh
+export TRIGGER_CONTRACT_ADDRESS=<LedgerTrigger address printed in step 1>
+export TRIGGER_PRICE_USD=1500
+npm run set-price -- --network localhost
+export KEEPER_RPC_URL=http://127.0.0.1:8545
+export KEEPER_PRIVATE_KEY=<private key of account 1>
+export KEEPER_CONTRACT_ADDRESS=$TRIGGER_CONTRACT_ADDRESS
+export KEEPER_FROM_BLOCK=<block number printed in step 1>
+export KEEPER_MAX_FEE_WEI=5000000000000000
+npm run keeper -- --once
+```
+
+The keeper logs `action=filled` for the order. Without reloading the page, you should see the order's row flash and turn to `Filled` in green, the recipient's ETH go up, and an `OrderFilled` line at the top of the event list.
+
+The other buttons: **Cancel** cancels an `Open` or `Expired` order of yours. **Fill now** fills an `Open` order yourself; only its owner and its executor can. To see a refusal, look up someone else's order with "Look up order #" (it is marked "not yours") and press Fill now: the page shows `NotOrderOwnerOrExecutor(...)` and sends nothing.
+
+Good to know:
+
+- The mock price counts as stale 75 minutes after it was set (`maxPriceAge`): orders then show `Open · waiting: StalePrice`. Run `set-price` again.
+- After restarting the node, everything on the old chain is gone: deploy again and press Load (on a fresh node the address is usually the same as before). MetaMask still counts the old chain's transactions and sends the next one with a wrong number (nonce), which the node refuses. Clear them in MetaMask: open Settings, then Advanced, and press the button that clears the account's activity and nonce data ("Reset account" in MetaMask's developer documentation; some versions call it "Clear activity tab data").
+- `npm run web:build` builds the page into `web/dist/`, and `npm run web:preview` serves that build at `http://localhost:4173/`.
+
+**The development page** `http://localhost:5173/dev.html` is for development and checks only; for a demonstration, open the real page with MetaMask. It loads a stand-in wallet that passes every request to the local node, which signs with its own unlocked test accounts: the stand-in holds no key. `?account=N` picks test account N (default 0), `?reject=1` makes it refuse every transaction as if the user said no, and `?switchTo=N` switches to account N 3 seconds after connecting, as a wallet does when the user picks another account. It works only with Hardhat's local chain, and it does not install itself when the browser already has a wallet.
+
 ## Sepolia test network
 
 The configuration has a `sepolia` network. Its node URL and private key are Hardhat configuration variables, `TRIGGER_SEPOLIA_RPC_URL` and `TRIGGER_SEPOLIA_PRIVATE_KEY`, read from environment variables of those names or from Hardhat's encrypted keystore; no value is written in the repository. With its chain ID set to 11155111, Hardhat refuses a node that serves another chain. Follow [docs/testnet-guide.md](docs/testnet-guide.md) to deploy on Sepolia with `deploy:external`, place an order and let the keeper fill it: which wallets you need, where the keys go and where they never go, each command, and what you should see. `npm run demo` is not part of it: the demo runs on Hardhat's local chain only.
@@ -263,4 +335,8 @@ The configuration has a `sepolia` network. Its node URL and private key are Hard
 - A tip for whoever fills an order: the keeper is the user's own program and pays its own gas.
 - Filling one order in several parts.
 - Orders that wake up only after the price first crosses another level, such as "once ETH has gone above 1700 USD, place a buy order at 1500 USD".
-- Recurring purchases and a web page: optional, possibly later.
+- Recurring purchases: optional, possibly later.
+
+## License
+
+Ledger Trigger is released under the MIT License. See [LICENSE](LICENSE).
