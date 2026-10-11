@@ -17,9 +17,11 @@ import {
   myOrderIds,
   myOrderRows,
   orderRow,
+  rowCondition,
   type CreatedOrder,
   type OrderRow,
   type OrderSnapshot,
+  type RowCondition,
 } from "./lib/orders.ts";
 import { describeFailure } from "./lib/revert.ts";
 import { isBusy } from "./lib/txState.ts";
@@ -55,8 +57,8 @@ type RowParts = {
   readonly message: HTMLElement;
   readonly step: TxStep;
   busy: boolean;
-  /** The order's status when the red message was shown, if one is shown. */
-  messageShownAt: number | undefined;
+  /** What the row showed when the red message appeared, if one is shown. */
+  messageShownAt: RowCondition | undefined;
 };
 
 const snapshots = new Map<bigint, OrderSnapshot>();
@@ -64,6 +66,15 @@ const myRows = new Map<bigint, RowParts>();
 let lookupRow: RowParts | undefined;
 let lookupId: bigint | undefined;
 const flashing = new Set<bigint>();
+
+/** The status and the reason the row of `snapshot` shows. */
+function conditionOf(
+  snapshot: OrderSnapshot | undefined,
+): RowCondition | undefined {
+  return snapshot === undefined
+    ? undefined
+    : { status: snapshot.status, reason: snapshot.check.reason };
+}
 
 function isFinal(snapshot: OrderSnapshot | undefined): boolean {
   return (
@@ -149,22 +160,23 @@ function updateNote(parts: RowParts): void {
 }
 
 /**
- * Shows the red message under a row, or clears it. `status` is the order's
- * status the message is about; the message goes once that changes.
+ * Shows the red message under a row, or clears it. `shownAt` is what the row
+ * showed (status and reason) when the message appeared; the message goes
+ * once either changes.
  */
 function showRowMessage(
   parts: RowParts,
   text: string | undefined,
-  status?: number,
+  shownAt?: RowCondition,
 ): void {
-  parts.messageShownAt = text === undefined ? undefined : status;
+  parts.messageShownAt = text === undefined ? undefined : shownAt;
   setShown(parts.message, text !== undefined);
   setText(parts.message, text ?? "");
   updateNote(parts);
 }
 
 function updateRow(page: Page, parts: RowParts, row: OrderRow): void {
-  if (clearsRowMessage(parts.messageShownAt, row.statusValue)) {
+  if (clearsRowMessage(parts.messageShownAt, rowCondition(row))) {
     showRowMessage(parts, undefined);
   }
   setShown(parts.badge, !row.mine);
@@ -227,7 +239,7 @@ async function act(
       showRowMessage(
         parts,
         failure.kind === "error" ? failure.text : "Not sent.",
-        snapshots.get(parts.orderId)?.status,
+        conditionOf(snapshots.get(parts.orderId)),
       );
       return;
     }

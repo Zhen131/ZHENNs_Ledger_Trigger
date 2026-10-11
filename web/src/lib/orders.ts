@@ -63,6 +63,8 @@ export type OrderRow = {
   readonly expiry: bigint;
   /** `statusOf`: an OrderStatus value. */
   readonly statusValue: number;
+  /** The reason `canFill` gave: a FillBlocker value. */
+  readonly reasonValue: number;
   readonly status: StatusView;
   readonly actions: OrderActions;
 };
@@ -101,6 +103,7 @@ export function orderRow(
     targetPrice: formatAmount(snapshot.order.targetPrice, decimals.price),
     expiry: snapshot.order.expiry,
     statusValue: snapshot.status,
+    reasonValue: snapshot.check.reason,
     status: statusView(snapshot.status, snapshot.check),
     actions: actionsFor(snapshot.status),
   };
@@ -139,16 +142,34 @@ export function approvalFor(
   return { needed: allowance < target, allowance: target };
 }
 
+/** What a row shows about an order: its status and the reason from `canFill`. */
+export type RowCondition = {
+  /** `statusOf`: an OrderStatus value. */
+  readonly status: number;
+  /** `canFill`'s reason: a FillBlocker value. */
+  readonly reason: number;
+};
+
+/** The status and the reason a row shows. */
+export function rowCondition(row: OrderRow): RowCondition {
+  return { status: row.statusValue, reason: row.reasonValue };
+}
+
 /**
  * Whether the red message under an order's row goes away now. The message
- * says why the contract refused a call while the order had status `shownAt`
- * (a `statusOf` value, undefined when no message is shown). Once the order's
- * status is another one, `now`, such as Filled after Open, the message no
- * longer fits what the row shows, so it goes.
+ * says why the contract refused a call while the row showed `shownAt`
+ * (undefined when no message is shown). Once the row shows something else,
+ * `now`, the message no longer fits it, so it goes: when the status changed,
+ * such as Filled after Open, and also when only the reason changed, such as
+ * "can be filled now" after "waiting: PriceAboveTarget". It stays only while
+ * both are the same.
  */
 export function clearsRowMessage(
-  shownAt: number | undefined,
-  now: number,
+  shownAt: RowCondition | undefined,
+  now: RowCondition,
 ): boolean {
-  return shownAt !== undefined && shownAt !== now;
+  return (
+    shownAt !== undefined &&
+    (shownAt.status !== now.status || shownAt.reason !== now.reason)
+  );
 }

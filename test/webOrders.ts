@@ -9,6 +9,7 @@ import {
   myOrderIds,
   myOrderRows,
   orderRow,
+  rowCondition,
   type CreatedOrder,
   type OrderSnapshot,
 } from "../web/src/lib/orders.ts";
@@ -217,37 +218,71 @@ describe("web approval: approve only when the allowance falls short", () => {
   });
 });
 
-describe("web row message: a refusal goes once the order's status changes", () => {
+describe("web row message: a refusal goes once the row's status or reason changes", () => {
+  const open = (reason: number) => ({ status: OrderStatus.Open, reason });
+  const WAITING_PRICE = open(FillBlocker.PriceAboveTarget);
+
   it("goes when the order leaves Open: Filled, Cancelled or Expired", () => {
     for (const now of [
-      OrderStatus.Filled,
-      OrderStatus.Cancelled,
-      OrderStatus.Expired,
+      { status: OrderStatus.Filled, reason: FillBlocker.NotOpen },
+      { status: OrderStatus.Cancelled, reason: FillBlocker.NotOpen },
+      { status: OrderStatus.Expired, reason: FillBlocker.Expired },
     ]) {
-      assert.equal(clearsRowMessage(OrderStatus.Open, now), true, String(now));
+      assert.equal(
+        clearsRowMessage(WAITING_PRICE, now),
+        true,
+        JSON.stringify(now),
+      );
     }
   });
 
-  it("stays while the status is the same, even if the reason to wait changed", () => {
-    assert.equal(clearsRowMessage(OrderStatus.Open, OrderStatus.Open), false);
+  it("goes when only the reason changes, the status staying Open", () => {
+    assert.equal(clearsRowMessage(WAITING_PRICE, open(FillBlocker.None)), true);
     assert.equal(
-      clearsRowMessage(OrderStatus.Expired, OrderStatus.Expired),
+      clearsRowMessage(WAITING_PRICE, open(FillBlocker.StalePrice)),
+      true,
+    );
+  });
+
+  it("stays while both the status and the reason are the same", () => {
+    assert.equal(clearsRowMessage(WAITING_PRICE, WAITING_PRICE), false);
+    const expired = {
+      status: OrderStatus.Expired,
+      reason: FillBlocker.Expired,
+    };
+    assert.equal(clearsRowMessage(expired, { ...expired }), false);
+  });
+
+  it("nothing to clear when no message is shown", () => {
+    assert.equal(
+      clearsRowMessage(undefined, {
+        status: OrderStatus.Filled,
+        reason: FillBlocker.NotOpen,
+      }),
       false,
     );
   });
 
-  it("nothing to clear when no message is shown", () => {
-    assert.equal(clearsRowMessage(undefined, OrderStatus.Filled), false);
-  });
-
-  it("each row carries the statusOf value it was built from", () => {
-    assert.equal(
-      orderRow(snapshot(1n, ME, OrderStatus.Open), ME, DECIMALS).statusValue,
-      OrderStatus.Open,
+  it("each row carries the status and the reason it was built from", () => {
+    const waiting = orderRow(snapshot(1n, ME, OrderStatus.Open), ME, DECIMALS);
+    assert.deepEqual(rowCondition(waiting), WAITING_PRICE);
+    const ready = orderRow(
+      snapshot(1n, ME, OrderStatus.Open, READY),
+      ME,
+      DECIMALS,
     );
-    assert.equal(
-      orderRow(snapshot(1n, ME, OrderStatus.Filled), ME, DECIMALS).statusValue,
-      OrderStatus.Filled,
+    assert.deepEqual(rowCondition(ready), open(FillBlocker.None));
+    const filled = orderRow(
+      snapshot(1n, ME, OrderStatus.Filled, {
+        fillable: false,
+        reason: FillBlocker.NotOpen,
+      }),
+      ME,
+      DECIMALS,
     );
+    assert.deepEqual(rowCondition(filled), {
+      status: OrderStatus.Filled,
+      reason: FillBlocker.NotOpen,
+    });
   });
 });
