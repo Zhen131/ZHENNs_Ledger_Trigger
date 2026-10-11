@@ -8,6 +8,13 @@
 
 import { createReader, loadTrigger } from "./chain.ts";
 import { byId, remember, remembered, setShown, setText } from "./dom.ts";
+import {
+  createdOrders,
+  feedEntries,
+  pullEvents,
+  resetEvents,
+} from "./events.ts";
+import { renderFeed } from "./feedList.ts";
 import { shortAddress } from "./lib/format.ts";
 import { DEFAULT_RPC_URL, rpcUrlFrom } from "./lib/loopback.ts";
 import {
@@ -21,6 +28,14 @@ import {
 import { PAGE_MARKUP } from "./markup.ts";
 import { refreshMetrics, resetMyBalances } from "./metrics.ts";
 import { initOrderForm, isPlacing, resetOrderMessage } from "./orderForm.ts";
+import {
+  initOrders,
+  redrawOrders,
+  refreshOrders,
+  resetAllOrders,
+  resetMyOrders,
+  resetRowMessages,
+} from "./ordersCard.ts";
 import { sendBlocker, type Page } from "./page.ts";
 import {
   findWallet,
@@ -84,6 +99,7 @@ function updateControls(): void {
   const submit = byId<HTMLButtonElement>("order-submit");
   submit.disabled = blocker !== undefined || isPlacing();
   setText(byId("order-hint"), blocker ?? "");
+  redrawOrders(page, createdOrders());
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +122,19 @@ async function refreshOnce(): Promise<void> {
     return;
   }
   await refreshMetrics(page);
+  let pulled;
+  try {
+    pulled = await pullEvents(page);
+  } catch {
+    pulled = { filled: [], restarted: false };
+  }
+  if (pulled.restarted && page.trigger !== undefined) {
+    // The node was restarted: what was read belongs to the old chain.
+    void loadContract(page.trigger.address);
+    return;
+  }
+  renderFeed(feedEntries());
+  await refreshOrders(page, createdOrders(), pulled.filled);
 }
 
 /** Refreshes everything; calls that come in meanwhile run once afterwards. */
@@ -142,6 +171,9 @@ function startWatching(): void {
 // ---------------------------------------------------------------------------
 
 async function loadContract(text: string): Promise<void> {
+  resetEvents();
+  resetAllOrders();
+  renderFeed([]);
   const result = await loadTrigger(page.reader, text);
   if (!result.ok) {
     page.trigger = undefined;
@@ -169,6 +201,10 @@ byId("contract-form").addEventListener("submit", (event) => {
 function applyResets(resets: readonly ResetName[]): void {
   if (resets.includes(Reset.MyBalances)) resetMyBalances();
   if (resets.includes(Reset.FormMessage)) resetOrderMessage();
+  if (resets.includes(Reset.MyOrders)) resetMyOrders();
+  if (resets.includes(Reset.RowMessages)) resetRowMessages();
+  // Reset.LookupOwnership: the next redraw marks the looked-up order with
+  // the new account (updateControls below redraws it).
 }
 
 function applyAccounts(accounts: readonly unknown[]): void {
@@ -232,6 +268,7 @@ if (page.wallet !== undefined) {
 // ---------------------------------------------------------------------------
 
 initOrderForm(page, updateControls);
+initOrders(page);
 
 updateControls();
 if (!rpc.ok) {
