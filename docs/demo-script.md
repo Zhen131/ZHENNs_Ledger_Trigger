@@ -15,7 +15,7 @@ The scenario IDs are those of [contract-spec.md](contract-spec.md), part 6. Ever
 
 Use the real page only, the one `npm run web` serves at `http://localhost:5173/`. Do not open `dev.html`: it is a development page with a stand-in wallet, not for a demonstration.
 
-Steps marked _(not checked with a real wallet)_ happen in MetaMask. This script was walked through with the development page's stand-in wallet, which signs without asking, so those steps were read but not tried. Rehearse them before the day.
+Every action in MetaMask, including those under "If it goes wrong", is marked _(not checked with a real wallet)_. This script was walked through with the development page's stand-in wallet, which signs without asking, so those steps were read but not tried. Rehearse them before the day.
 
 ## The values used
 
@@ -125,9 +125,9 @@ You need three terminals, each opened in the repository folder: terminal 1 runs 
 
 **P4. Connect the wallet.**
 
-- **Do.** Switch MetaMask to the local network and to account #0. Press "Connect wallet" on the page and accept in MetaMask; allow both account #0 and account #3 to connect, so that switching between them in scene 4 changes the page _(not checked with a real wallet)_. Then type the recipient (account #2) and the executor (account #1) into the order form; the page remembers them.
+- **Do.** Switch MetaMask to the local network and to account #0 _(not checked with a real wallet)_. Press "Connect wallet" on the page and accept in MetaMask; allow both account #0 and account #3 to connect, so that switching between them in scene 4 changes the page _(not checked with a real wallet)_. Then type the recipient (account #2) and the executor (account #1) into the order form; the page remembers them.
 - **You should see** `0xf39F…2266 · chain 31337` next to the button; "My USDC" `1000.00` with `allowance to the contract 0.00`; "Recipient's ETH" `10000.000000`; under "My orders" `You have placed no orders on this contract yet.`
-- **If it goes wrong.** `Your wallet is on chain …, but the local node is chain 31337` means MetaMask is on another network: switch it to the local network. If the node was restarted since the last rehearsal, clear the nonce first (B4).
+- **If it goes wrong.** `Your wallet is on chain …, but the local node is chain 31337` means MetaMask is on another network: switch it to the local network _(not checked with a real wallet)_. If the node was restarted since the last rehearsal, clear the nonce first (B4) _(not checked with a real wallet)_.
 
 **P5. Get the keeper's settings ready, but do not run it.**
 
@@ -173,7 +173,7 @@ Start the clock.
 
   ![The order after it is placed, waiting for the price](img/order-waiting.png)
 
-- **If it goes wrong.** `You rejected it in the wallet`: press "Place order" again and accept. MetaMask refuses to send, or the node reports a wrong nonce: clear the nonce (B4) and try again. The block numbers can be different if more was sent before; that does not matter.
+- **If it goes wrong.** `You rejected it in the wallet`: press "Place order" again and accept in MetaMask _(not checked with a real wallet)_. MetaMask refuses to send, or the node reports a wrong nonce: clear the nonce (B4) and try again _(not checked with a real wallet)_. The block numbers can be different if more was sent before; that does not matter.
 
 ## Scene 3. Fill before the price is reached (refused: S06)
 
@@ -188,7 +188,7 @@ Start the clock.
 
   ![A stranger's fill refused by the contract](img/stranger-refused.png)
 
-- **If it goes wrong.** If the page still shows `0xf39F…2266` after the switch, account #3 is not connected to the page: press "Connect wallet" and allow account #3 _(not checked with a real wallet)_, or reload the page and connect again. `StalePrice` instead of the expected error: as in scene 3.
+- **If it goes wrong.** If the page still shows `0xf39F…2266` after the switch, account #3 is not connected to the page: press "Connect wallet" and allow account #3 _(not checked with a real wallet)_, or reload the page and connect again _(not checked with a real wallet)_. `StalePrice` instead of the expected error: as in scene 3.
 
 ## Scene 5. Move the price; the keeper fills (correct: S01, second half)
 
@@ -233,15 +233,15 @@ Start the clock.
 
 ## Scene 7. Place and cancel another order (correct: S03)
 
-- **Do.** Make sure MetaMask is on account #0. Type Amount `50`, Target price `1200`, Valid for `60`, and press "Place order". MetaMask asks twice again, because the fill used up the allowance: accept both _(not checked with a real wallet)_. Then press "Cancel" on order #2 and accept in MetaMask _(not checked with a real wallet)_.
+- **Do.** Make sure MetaMask is on account #0 _(not checked with a real wallet)_. Type Amount `50`, Target price `1200`, Valid for `60`, and press "Place order". MetaMask asks twice again, because the fill used up the allowance: accept both _(not checked with a real wallet)_. Then press "Cancel" on order #2 and accept in MetaMask _(not checked with a real wallet)_.
 - **You should see** `Approve USDC: Confirmed in block 12` and `Place order: Confirmed in block 13`, and order `#2` with `50.00`, `1200.00` and `Open · waiting: PriceAboveTarget` (the price, 1400, is above this order's target). After Cancel: `Cancel: Confirmed in block 14`, the order turns to `Cancelled` in grey, its buttons are gone, and "Events" shows `OrderCancelled` for order `#2`, `by 0xf39F…2266`.
-- **If it goes wrong.** Red `NotOrderOwner(…)` under the row: MetaMask is still on account #3; switch back to #0.
+- **If it goes wrong.** Red `NotOrderOwner(…)` under the row: MetaMask is still on account #3; switch it back to #0 _(not checked with a real wallet)_.
 
 ## Scene 8. An order above the limit (refused: S20)
 
 - **Do.** Type Amount `600` (above the 500 USDC limit that the deployment printed in P2), Target price `1500`, and press "Place order".
 - **You should see** red text under the form: `AmountAboveMax(amount: 600.00, max: 500.00)`. MetaMask is not asked at all, not even for the approval, and no order is added.
-- **If it goes wrong.** If MetaMask asks anyway, reject it, and show the same refusal from terminal 3 instead:
+- **If it goes wrong.** If MetaMask asks anyway, reject it _(not checked with a real wallet)_, and show the same refusal from terminal 3 instead:
 
   ```sh
   TRIGGER_ORDER_USDC=600 TRIGGER_TARGET_PRICE_USD=1500 TRIGGER_EXPIRY_MINUTES=60 \
