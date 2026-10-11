@@ -25,7 +25,7 @@ This document is for someone who meets the project for the first time. Each part
 2. Three roles: owner, executor and recipient. There is no admin. Only the owner can cancel an order; only the owner and the executor named in that order can fill it.
 3. Every fill gives two hard guarantees: the price paid is never above the target price, and the ETH received is never less than the price feed's price gives, minus the allowed slippage. Both minimums are whole numbers rounded down, so each can fall short of the exact value by less than one wei.
 4. An order is stored as `Open`, `Filled` or `Cancelled`. `Expired` is never stored; it is worked out from the time. `Filled` and `Cancelled` are final.
-5. The contract keeps no money: its USDC and ETH balances are the same before and after every fill.
+5. The contract keeps no money: its USDC and ETH balances are the same before and after every fill. This is a promise about fills only; part 4, group 6, says what happens to USDC sent straight to the contract.
 
 **Why it is built this way.**
 
@@ -88,7 +88,7 @@ Three boundaries are fixed: a price exactly `maxPriceAge` seconds old still coun
 
 ## 3. Data structures
 
-The contract stores three things: the orders, which are never deleted; for each owner, the count and USDC total of its open orders; and seven settings that never change.
+The contract stores three things: the orders, which are never deleted; for each owner, the count and USDC total of its open orders; and seven settings and two decimals that never change.
 
 ### Deployment parameters
 
@@ -250,7 +250,7 @@ stateDiagram-v2
     Cancelled --> [*]
 ```
 
-`Filled` and `Cancelled` are the final states: an order can never be both filled and cancelled, and never leaves either. `Expired` is never stored: the contract has no clock and cannot do anything by itself when an order expires, so `statusOf` works the status out each time it is asked, from the expiry and the current block's time. In storage an expired order is still `Open`, so it keeps one of its owner's open-order slots until the owner cancels it, and it can no longer be filled. When a fill and a cancel of the same order are sent at the same time, whichever the chain includes first takes effect, and the other is rejected.
+`Filled` and `Cancelled` are the final states: an order can never be both filled and cancelled, and never leaves either. `Expired` is never stored: `statusOf` works the status out each time it is asked, from the expiry and the current block's time. In storage an expired order is still `Open`, and the contract has no clock and cannot free a slot by itself when an order expires, so the order keeps one of its owner's open-order slots until the owner cancels it; it can no longer be filled. When a fill and a cancel of the same order are sent at the same time, whichever the chain includes first takes effect, and the other is rejected.
 
 ## 6. Test scenarios
 
