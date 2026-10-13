@@ -47,6 +47,7 @@ import {
 import { demoChain } from "./demoChain.ts";
 import { playDca } from "./demoDca.ts";
 import { playDormant } from "./demoDormant.ts";
+import { playLadder } from "./demoLadder.ts";
 import { mined } from "./mined.ts";
 import { ScriptError, revertName } from "./scriptError.ts";
 import { GatedScript, openSendGate } from "./sendGate.ts";
@@ -65,6 +66,7 @@ export const DEMO_SCENARIOS = [
   "S29",
   "S37",
   "S38",
+  "S50",
 ] as const;
 export type DemoScenario = (typeof DEMO_SCENARIOS)[number];
 
@@ -137,6 +139,14 @@ export const EXPECTED: Readonly<
       "second fill in the same period rejected: PeriodAlreadyFilled",
       "order afterwards: PartiallyFilled",
       "one period later: PartiallyFilled -> Filled",
+    ],
+  },
+  S50: {
+    title: "Ladder: tiers filled in order",
+    expected: [
+      "first keeper round: Open -> PartiallyFilled, tiers 0 and 1 filled in order",
+      "tier 2 waits: PriceAboveTarget",
+      "second keeper round: PartiallyFilled -> Filled, tier 2 filled",
     ],
   },
 };
@@ -526,7 +536,7 @@ export async function runDemo(input: {
     deployment,
     accounts: { owner, keeper, recipient, stranger },
   });
-  for (const play of [playDormant, playDca]) {
+  for (const play of [playDormant, playDca, playLadder]) {
     for (const played of await play(chain)) {
       row(played.id, played.did, played.actual, played.details);
     }

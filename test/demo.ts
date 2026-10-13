@@ -52,6 +52,11 @@ const SCENARIO_TABLE = {
     "order afterwards: PartiallyFilled",
     "one period later: PartiallyFilled -> Filled",
   ],
+  S50: [
+    "first keeper round: Open -> PartiallyFilled, tiers 0 and 1 filled in order",
+    "tier 2 waits: PriceAboveTarget",
+    "second keeper round: PartiallyFilled -> Filled, tier 2 filled",
+  ],
 } as const;
 
 async function playOnFreshChain(): Promise<DemoResult> {
@@ -70,7 +75,19 @@ describe("demo: the scenarios on a fresh local chain", () => {
 
     assert.deepEqual(
       result.rows.map((row) => row.id),
-      ["S01", "S03", "S04", "S06", "S07", "S15", "S27", "S29", "S37", "S38"],
+      [
+        "S01",
+        "S03",
+        "S04",
+        "S06",
+        "S07",
+        "S15",
+        "S27",
+        "S29",
+        "S37",
+        "S38",
+        "S50",
+      ],
     );
     assert.deepEqual(DEMO_SCENARIOS, [
       "S01",
@@ -83,6 +100,7 @@ describe("demo: the scenarios on a fresh local chain", () => {
       "S29",
       "S37",
       "S38",
+      "S50",
     ]);
     for (const row of result.rows) {
       assert.equal(row.pass, true, `${row.id}: ${row.actual.join("; ")}`);
@@ -110,12 +128,12 @@ describe("demo: the scenarios on a fresh local chain", () => {
 
     assert.equal(
       lines.filter((line) => line === "  Result:   PASS").length,
-      10,
+      11,
     );
     for (const id of DEMO_SCENARIOS) {
       assert.match(text, new RegExp(`^\\| ${id} \\|.*\\| PASS   \\|$`, "m"));
     }
-    assert.equal(lines.at(-1), "10 of 10 scenarios PASS.");
+    assert.equal(lines.at(-1), "11 of 11 scenarios PASS.");
     assert.doesNotMatch(text, /FAIL/);
   });
 });
@@ -147,7 +165,7 @@ describe("demo: a result that is not the expected one", () => {
 
     assert.equal(allPassed(spoiled), false);
     assert.match(lines.join("\n"), /^\| S06 \|.*\| FAIL   \|$/m);
-    assert.equal(lines.at(-1), "9 of 10 scenarios PASS. FAIL: S06.");
+    assert.equal(lines.at(-1), "10 of 11 scenarios PASS. FAIL: S06.");
   });
 });
 
@@ -201,8 +219,8 @@ describe("demo: the npm run demo entry point", () => {
     );
 
     assert.equal(run.code, 0, run.output);
-    assert.equal(run.output.match(/^ {2}Result: {3}PASS$/gm)?.length, 10);
-    assert.match(run.output, /^10 of 10 scenarios PASS\.$/m);
+    assert.equal(run.output.match(/^ {2}Result: {3}PASS$/gm)?.length, 11);
+    assert.match(run.output, /^11 of 11 scenarios PASS\.$/m);
     assert.doesNotMatch(run.output, /https?:\/\//);
   });
 });
