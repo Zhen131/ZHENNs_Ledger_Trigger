@@ -1,5 +1,6 @@
-// Entry point of `npm run demo`: plays the six demo scenarios on Hardhat's
-// in-process local chain, which is new on every run, and prints the results.
+// Entry point of `npm run demo`: plays the demo scenarios (see ../demo.ts) on
+// Hardhat's in-process local chain, which is new on every run, and prints the
+// results.
 // Exits with 0 when every scenario passes and 1 otherwise. Refuses to run on
 // any chain other than Hardhat's local chain.
 
