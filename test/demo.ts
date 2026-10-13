@@ -57,6 +57,15 @@ const SCENARIO_TABLE = {
     "tier 2 waits: PriceAboveTarget",
     "second keeper round: PartiallyFilled -> Filled, tier 2 filled",
   ],
+  S56: [
+    "Open -> Filled",
+    "the owner got one receipt",
+    "receipt matches OrderFilled",
+  ],
+  S57: [
+    "transfer rejected: ReceiptNotTransferable",
+    "receipt still held by the owner",
+  ],
 } as const;
 
 async function playOnFreshChain(): Promise<DemoResult> {
@@ -87,6 +96,8 @@ describe("demo: the scenarios on a fresh local chain", () => {
         "S37",
         "S38",
         "S50",
+        "S56",
+        "S57",
       ],
     );
     assert.deepEqual(DEMO_SCENARIOS, [
@@ -101,6 +112,8 @@ describe("demo: the scenarios on a fresh local chain", () => {
       "S37",
       "S38",
       "S50",
+      "S56",
+      "S57",
     ]);
     for (const row of result.rows) {
       assert.equal(row.pass, true, `${row.id}: ${row.actual.join("; ")}`);
@@ -128,12 +141,12 @@ describe("demo: the scenarios on a fresh local chain", () => {
 
     assert.equal(
       lines.filter((line) => line === "  Result:   PASS").length,
-      11,
+      13,
     );
     for (const id of DEMO_SCENARIOS) {
       assert.match(text, new RegExp(`^\\| ${id} \\|.*\\| PASS   \\|$`, "m"));
     }
-    assert.equal(lines.at(-1), "11 of 11 scenarios PASS.");
+    assert.equal(lines.at(-1), "13 of 13 scenarios PASS.");
     assert.doesNotMatch(text, /FAIL/);
   });
 });
@@ -165,7 +178,7 @@ describe("demo: a result that is not the expected one", () => {
 
     assert.equal(allPassed(spoiled), false);
     assert.match(lines.join("\n"), /^\| S06 \|.*\| FAIL   \|$/m);
-    assert.equal(lines.at(-1), "10 of 11 scenarios PASS. FAIL: S06.");
+    assert.equal(lines.at(-1), "12 of 13 scenarios PASS. FAIL: S06.");
   });
 });
 
@@ -219,8 +232,8 @@ describe("demo: the npm run demo entry point", () => {
     );
 
     assert.equal(run.code, 0, run.output);
-    assert.equal(run.output.match(/^ {2}Result: {3}PASS$/gm)?.length, 11);
-    assert.match(run.output, /^11 of 11 scenarios PASS\.$/m);
+    assert.equal(run.output.match(/^ {2}Result: {3}PASS$/gm)?.length, 13);
+    assert.match(run.output, /^13 of 13 scenarios PASS\.$/m);
     assert.doesNotMatch(run.output, /https?:\/\//);
   });
 });

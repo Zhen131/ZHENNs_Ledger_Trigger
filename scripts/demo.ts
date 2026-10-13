@@ -1,6 +1,6 @@
-// The demo: thirteen of the contracts' test scenarios, played on a
-// fresh local chain. First six about plain limit orders, two that must succeed
-// and four that must be rejected:
+// The demo: thirteen of the contracts' test scenarios, played on a fresh
+// local chain. First, six about plain limit orders, two that must succeed and
+// four that must be rejected:
 //
 //   S01 normal fill (filled by the keeper's round), S03 cancel, S04 a stranger
 //   fills, S06 the price is above the target, S07 a second fill of the same
@@ -48,6 +48,7 @@ import { demoChain } from "./demoChain.ts";
 import { playDca } from "./demoDca.ts";
 import { playDormant } from "./demoDormant.ts";
 import { playLadder } from "./demoLadder.ts";
+import { playReceipt } from "./demoReceipt.ts";
 import { mined } from "./mined.ts";
 import { ScriptError, revertName } from "./scriptError.ts";
 import { GatedScript, openSendGate } from "./sendGate.ts";
@@ -67,6 +68,8 @@ export const DEMO_SCENARIOS = [
   "S37",
   "S38",
   "S50",
+  "S56",
+  "S57",
 ] as const;
 export type DemoScenario = (typeof DEMO_SCENARIOS)[number];
 
@@ -147,6 +150,21 @@ export const EXPECTED: Readonly<
       "first keeper round: Open -> PartiallyFilled, tiers 0 and 1 filled in order",
       "tier 2 waits: PriceAboveTarget",
       "second keeper round: PartiallyFilled -> Filled, tier 2 filled",
+    ],
+  },
+  S56: {
+    title: "Each fill issues a receipt",
+    expected: [
+      "Open -> Filled",
+      "the owner got one receipt",
+      "receipt matches OrderFilled",
+    ],
+  },
+  S57: {
+    title: "A receipt cannot be transferred",
+    expected: [
+      "transfer rejected: ReceiptNotTransferable",
+      "receipt still held by the owner",
     ],
   },
 };
@@ -536,7 +554,7 @@ export async function runDemo(input: {
     deployment,
     accounts: { owner, keeper, recipient, stranger },
   });
-  for (const play of [playDormant, playDca, playLadder]) {
+  for (const play of [playDormant, playDca, playLadder, playReceipt]) {
     for (const played of await play(chain)) {
       row(played.id, played.did, played.actual, played.details);
     }
