@@ -692,6 +692,7 @@ a {
   font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 400;
+  white-space: nowrap;
 }
 
 .progress {

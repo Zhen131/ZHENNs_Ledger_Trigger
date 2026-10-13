@@ -14,8 +14,11 @@ export function detailsLabel(kind: number): string | undefined {
   return undefined;
 }
 
-function pair(label: string, value: string): HTMLElement[] {
-  return [make("dt", "", label), make("dd", "", value)];
+/** One label and its value, kept together in the grid. */
+function pair(label: string, value: string): HTMLElement {
+  const item = make("div", "details-item");
+  item.append(make("dt", "", label), make("dd", "", value));
+  return item;
 }
 
 function scheduleElement(
@@ -34,13 +37,13 @@ function scheduleElement(
   );
   const list = make("dl", "details-grid");
   list.append(
-    ...pair("Starts", formatDateTime(view.startAt)),
-    ...pair("Every", view.every),
-    ...pair("Periods", view.periods),
-    ...pair("Per period", view.perPeriod),
-    ...pair("Price cap", view.cap),
-    ...pair("Next period", view.nextPeriod),
-    ...pair("Current period", view.currentPeriod),
+    pair("Starts", formatDateTime(view.startAt)),
+    pair("Every", view.every),
+    pair("Periods", view.periods),
+    pair("Per period", view.perPeriod),
+    pair("Price cap", view.cap),
+    pair("Next period", view.nextPeriod),
+    pair("Current period", view.currentPeriod),
   );
   const note = make(
     "p",
