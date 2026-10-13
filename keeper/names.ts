@@ -1,9 +1,9 @@
-// Names of the values of two of the order contract's four enums, OrderStatus
-// and FillBlocker.
+// Names of the values of three of the order contract's four enums,
+// OrderStatus, FillBlocker and ActivationBlocker.
 //
 // The contract's ABI carries an enum value as a plain number (uint8) without
 // its name, so the names are written out here, each with its value, in the
-// order the contract declares them. A test compares both lists with the enum
+// order the contract declares them. Tests compare each list with the enum
 // members in the compiler's syntax tree, so a list that drifts from the
 // contract fails the checks. The keeper and the demo both use these lists.
 
@@ -33,6 +33,19 @@ export const FillBlocker = {
   InsufficientBalance: 10,
 } as const;
 
+/**
+ * `LedgerTrigger.ActivationBlocker`: the reason `canActivate` returns, by
+ * name.
+ */
+export const ActivationBlocker = {
+  None: 0,
+  NotDormant: 1,
+  Expired: 2,
+  InvalidPrice: 3,
+  StalePrice: 4,
+  PriceBelowActivation: 5,
+} as const;
+
 /** The names of a value list, ordered by value. */
 export function namesInOrder(values: Readonly<Record<string, number>>) {
   return Object.entries(values)
@@ -54,4 +67,12 @@ export function orderStatusName(value: number): string {
 /** The name of a FillBlocker value, for example `PriceAboveTarget` for 8. */
 export function fillBlockerName(value: number): string {
   return nameOf(FillBlocker, value);
+}
+
+/**
+ * The name of an ActivationBlocker value, for example `PriceBelowActivation`
+ * for 5.
+ */
+export function activationBlockerName(value: number): string {
+  return nameOf(ActivationBlocker, value);
 }
