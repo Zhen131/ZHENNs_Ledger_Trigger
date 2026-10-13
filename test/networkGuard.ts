@@ -174,7 +174,7 @@ describe("network guard: a connection to a chain that is not local", () => {
     assert.equal(await chain.blockNumber(), before);
 
     await deploy(CONFIRM_PHRASE);
-    assert.equal(await chain.blockNumber(), before + 2n);
+    assert.equal(await chain.blockNumber(), before + 3n);
     await connection.close();
   });
 });

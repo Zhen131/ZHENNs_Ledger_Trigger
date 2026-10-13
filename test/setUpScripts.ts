@@ -11,12 +11,16 @@
 //
 // `withParts` also deploys the full set directly, without the scripts:
 // MockUSDC, MockPriceFeed (8 decimals, 2000 USD), MockSwapVenue (no fee,
-// stocked with 10 ETH) and LedgerTrigger with the default limits, and mints
-// 1000 USDC to the owner.
+// stocked with 10 ETH), a FillReceipt and LedgerTrigger with the default
+// limits, and mints 1000 USDC to the owner. The FillReceipt is deployed right
+// before LedgerTrigger, from the same account (the owner), bound to the
+// address LedgerTrigger is about to get, worked out from that account's
+// transaction count.
 //
 // This file holds no tests; test files import `setUpScripts` from it.
 
 import { network } from "hardhat";
+import { getContractAddress } from "viem";
 
 const ONE_USDC = 1_000_000n;
 const ONE_ETH = 10n ** 18n;
@@ -67,6 +71,16 @@ export async function setUpScripts(
       feed.address,
       0n,
     ]);
+    const nonce = await publicClient.getTransactionCount({
+      address: owner.account.address,
+      blockTag: "pending",
+    });
+    const fillReceipt = await viem.deployContract("FillReceipt", [
+      getContractAddress({
+        from: owner.account.address,
+        nonce: BigInt(nonce) + 1n,
+      }),
+    ]);
     const trigger = await viem.deployContract("LedgerTrigger", [
       usdc.address,
       feed.address,
@@ -77,6 +91,7 @@ export async function setUpScripts(
       100n,
       52n,
       5n,
+      fillReceipt.address,
     ]);
     await publicClient.waitForTransactionReceipt({
       hash: await owner.sendTransaction({
@@ -89,7 +104,7 @@ export async function setUpScripts(
         account: owner.account,
       }),
     });
-    return { usdc, feed, venue, trigger };
+    return { usdc, feed, venue, trigger, fillReceipt };
   }
 
   return {

@@ -7,6 +7,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
+import {IFillReceipt} from "./interfaces/IFillReceipt.sol";
 import {IPriceFeed} from "./interfaces/IPriceFeed.sol";
 import {ISwapVenue} from "./interfaces/ISwapVenue.sol";
 
@@ -31,7 +32,7 @@ import {ISwapVenue} from "./interfaces/ISwapVenue.sol";
 /// tier's amount at no more than that tier's price, so a price that falls through several tiers
 /// at once still fills only the next one. Here too the owner approves the whole budget once, and
 /// the order is partly filled after its first fill and filled after its last.
-/// @dev There is no admin: no pause, no upgrade, no setter and no withdrawal. The nine deployment
+/// @dev There is no admin: no pause, no upgrade, no setter and no withdrawal. The ten deployment
 /// parameters can never change. The status `Expired` is never stored; `statusOf` works it out from
 /// the expiry. A fill keeps none of the USDC and ETH it moves: it passes all of both straight
 /// through. USDC sent straight to this contract cannot be refused, and stays here for good, as
@@ -290,6 +291,10 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @notice Largest number of tiers of one `Ladder` order. Set at deployment, never changes.
     /// @dev Anyone can read it; reading it never reverts.
     uint256 public immutable maxTiersPerOrder;
+    /// @notice The receipt contract, bound to this contract: the only address its receipts can
+    /// come from is this contract. Set at deployment, never changes.
+    /// @dev Anyone can read it; reading it never reverts.
+    IFillReceipt public immutable receipt;
     /// @notice Decimals of `usdc`, read from the token at deployment.
     /// @dev Anyone can read it; reading it never reverts.
     uint8 public immutable usdcDecimals;
@@ -519,6 +524,12 @@ contract LedgerTrigger is ReentrancyGuard {
     error ZeroMaxPeriodsPerOrder();
     /// @notice Deployment: `maxTiersPerOrder` is zero.
     error ZeroMaxTiersPerOrder();
+    /// @notice Deployment: the receipt contract address is the zero address.
+    error ZeroReceipt();
+    /// @notice Deployment: the receipt contract is bound to an address other than this contract.
+    /// @param receipt The receipt contract given.
+    /// @param boundTo The address it is bound to, as its `trigger` reports.
+    error ReceiptNotBound(address receipt, address boundTo);
     /// @notice The period length of a `Dca` order is zero.
     error ZeroPeriodLength();
     /// @notice The number of periods of a `Dca` order is zero.
@@ -617,14 +628,20 @@ contract LedgerTrigger is ReentrancyGuard {
         _;
     }
 
-    /// @notice Deploys the contract with its nine parameters, none of which can change later.
+    /// @notice Deploys the contract with its ten parameters, none of which can change later.
     /// @dev Checks, in order: the three addresses are not the zero address (`ZeroUsdc`,
     /// `ZeroPriceFeed`, `ZeroSwapVenue`); `maxOrderAmount_`, `maxOpenOrdersPerOwner_` and
     /// `maxPriceAge_` are above zero (`ZeroMaxOrderAmount`, `ZeroMaxOpenOrdersPerOwner`,
     /// `ZeroMaxPriceAge`); `maxSlippageBps_` is below 10000 (`SlippageTooHigh`), zero allowed;
     /// `maxPeriodsPerOrder_` and `maxTiersPerOrder_` are above zero (`ZeroMaxPeriodsPerOrder`,
-    /// `ZeroMaxTiersPerOrder`). Only then does it read the decimals of the token and of the price
-    /// feed and store them; it also reverts if either of them does not report its decimals.
+    /// `ZeroMaxTiersPerOrder`). After these nine, it checks the receipt contract: its address is
+    /// not the zero address (`ZeroReceipt`), and its `trigger` is this contract
+    /// (`ReceiptNotBound`, which names the receipt contract and the address it is bound to). The
+    /// receipt contract is deployed first, bound to the address this contract is about to get,
+    /// worked out from the deploying account and its transaction count. A receipt address with no
+    /// code, or a contract with no `trigger` function, makes the deployment revert with no error
+    /// data. Only then does it read the decimals of the token and of the price feed and store
+    /// them; it also reverts if either of them does not report its decimals.
     /// @param usdc_ The USDC token (an ERC-20 token address).
     /// @param priceFeed_ The price feed for ETH in USD (a Chainlink-style feed address).
     /// @param swapVenue_ The swap venue (an `ISwapVenue` address).
@@ -636,6 +653,7 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @param maxSlippageBps_ Allowed slippage, in basis points (uint256).
     /// @param maxPeriodsPerOrder_ Largest number of periods of one `Dca` order (uint256).
     /// @param maxTiersPerOrder_ Largest number of tiers of one `Ladder` order (uint256).
+    /// @param receipt_ The receipt contract, bound to this contract (an `IFillReceipt` address).
     constructor(
         IERC20 usdc_,
         IPriceFeed priceFeed_,
@@ -645,7 +663,8 @@ contract LedgerTrigger is ReentrancyGuard {
         uint256 maxPriceAge_,
         uint256 maxSlippageBps_,
         uint256 maxPeriodsPerOrder_,
-        uint256 maxTiersPerOrder_
+        uint256 maxTiersPerOrder_,
+        IFillReceipt receipt_
     ) {
         if (address(usdc_) == address(0)) revert ZeroUsdc();
         if (address(priceFeed_) == address(0)) revert ZeroPriceFeed();
@@ -658,6 +677,11 @@ contract LedgerTrigger is ReentrancyGuard {
         }
         if (maxPeriodsPerOrder_ == 0) revert ZeroMaxPeriodsPerOrder();
         if (maxTiersPerOrder_ == 0) revert ZeroMaxTiersPerOrder();
+        if (address(receipt_) == address(0)) revert ZeroReceipt();
+        address boundTo = receipt_.trigger();
+        if (boundTo != address(this)) {
+            revert ReceiptNotBound(address(receipt_), boundTo);
+        }
 
         usdc = usdc_;
         priceFeed = priceFeed_;
@@ -668,6 +692,7 @@ contract LedgerTrigger is ReentrancyGuard {
         maxSlippageBps = maxSlippageBps_;
         maxPeriodsPerOrder = maxPeriodsPerOrder_;
         maxTiersPerOrder = maxTiersPerOrder_;
+        receipt = receipt_;
         usdcDecimals = IERC20Metadata(address(usdc_)).decimals();
         priceDecimals = priceFeed_.decimals();
     }

@@ -1,9 +1,10 @@
 // Entry point of `npm run deploy:external`: for a test network. Takes the
 // addresses of an existing USDC token and price feed from
 // TRIGGER_USDC_ADDRESS and TRIGGER_PRICE_FEED_ADDRESS, checks both before
-// sending anything and prints what it found, then deploys MockSwapVenue and
-// LedgerTrigger. Prints every address, the parameters with their units and the
-// block LedgerTrigger was deployed in.
+// sending anything and prints what it found, then deploys MockSwapVenue,
+// FillReceipt and LedgerTrigger. Prints every address, the parameters with
+// their units, the address FillReceipt is bound to and the block LedgerTrigger
+// was deployed in.
 
 import {
   deploySettingsFrom,

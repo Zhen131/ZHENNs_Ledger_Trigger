@@ -2,26 +2,34 @@
 //
 // - mock parts (Hardhat's local chain only; the send gate refuses every other
 //   chain, whatever the confirmation variable holds): deploys MockUSDC, MockPriceFeed,
-//   MockSwapVenue and LedgerTrigger, stocks the swap venue with some ETH and
-//   mints some mock USDC to the deploying account, so that it can place and
-//   fill orders straight away;
+//   MockSwapVenue, FillReceipt and LedgerTrigger, stocks the swap venue with
+//   some ETH and mints some mock USDC to the deploying account, so that it can
+//   place and fill orders straight away;
 // - external parts (for a test network): takes the addresses of a USDC token
 //   and a price feed that already exist, checks that both hold contract code
-//   and answer like a token and a price feed, then deploys MockSwapVenue and
-//   LedgerTrigger only. The swap venue is not stocked with ETH here; the
-//   fund-venue script does that, right before it is needed.
+//   and answer like a token and a price feed, then deploys MockSwapVenue,
+//   FillReceipt and LedgerTrigger only. The swap venue is not stocked with ETH
+//   here; the fund-venue script does that, right before it is needed.
+//
+// FillReceipt and LedgerTrigger are bound to each other for good. Right after
+// the swap venue, the deploying account's transaction count gives the address
+// its next deployment but one will get; FillReceipt is deployed bound to that
+// address, and LedgerTrigger, deployed next, checks that FillReceipt names it.
+// Nothing else may be sent from the deploying account in between, from here or
+// anywhere else: LedgerTrigger would then get another address and refuse to
+// deploy.
 //
 // Both modes pass the send gate first. Afterwards they read LedgerTrigger's
-// nine parameters back from the chain and report them, together with every
-// address and the block LedgerTrigger was deployed in (the keeper's first
-// block to read).
+// ten parameters back from the chain, and the address FillReceipt is bound to,
+// and report them, together with every address and the block LedgerTrigger
+// was deployed in (the keeper's first block to read).
 //
 // The functions take Hardhat's viem helpers of a network connection; they
 // never read the environment. `deploySettingsFrom` turns the environment into
 // settings, with the defaults below.
 
 import type { NetworkConnection } from "hardhat/types/network";
-import { erc20Abi, type Address } from "viem";
+import { erc20Abi, getContractAddress, type Address } from "viem";
 
 import { formatDecimal, parseDecimal, parseWhole } from "./amounts.ts";
 import { scriptClients } from "./clients.ts";
@@ -156,7 +164,7 @@ export type PartsCheck = {
   readonly updatedAt: bigint;
 };
 
-/** The nine LedgerTrigger parameters, as read back from the chain. */
+/** The ten LedgerTrigger parameters, as read back from the chain. */
 export type TriggerParameters = {
   readonly usdc: Address;
   readonly priceFeed: Address;
@@ -167,14 +175,23 @@ export type TriggerParameters = {
   readonly maxSlippageBps: bigint;
   readonly maxPeriodsPerOrder: bigint;
   readonly maxTiersPerOrder: bigint;
+  readonly receipt: Address;
 };
 
 export type DeploymentReport = {
   readonly chainId: number;
   readonly deployer: Address;
-  /** Which parts this run deployed: all four, or the venue and LedgerTrigger. */
+  /**
+   * Which parts this run deployed: all five, or the venue, FillReceipt and
+   * LedgerTrigger.
+   */
   readonly deployedNow: readonly string[];
   readonly trigger: Address;
+  /**
+   * The one address FillReceipt lets issue receipts, read back from the
+   * chain: always `trigger`, or the deployment stops with an error.
+   */
+  readonly receiptBoundTo: Address;
   /** Block that holds LedgerTrigger's deployment. */
   readonly triggerBlock: bigint;
   /** LedgerTrigger's parameters, read back from the chain. */
@@ -248,7 +265,10 @@ export async function checkExternalParts(
   return { usdcDecimals, feedDecimals, latestPrice, updatedAt };
 }
 
-/** Deploys the swap venue and LedgerTrigger on top of a USDC and a feed. */
+/**
+ * Deploys the swap venue, FillReceipt and LedgerTrigger on top of a USDC and a
+ * feed, and checks what the chain then holds.
+ */
 async function deployVenueAndTrigger(
   viem: Viem,
   usdc: Address,
@@ -256,7 +276,11 @@ async function deployVenueAndTrigger(
   usdcDecimals: number,
   settings: DeploySettings,
 ) {
-  const { publicClient, client } = await scriptClients(viem);
+  const { publicClient, walletClients, client } = await scriptClients(viem);
+  const [deployer] = walletClients;
+  if (deployer === undefined) {
+    throw new ScriptError("The network has no account to deploy from.");
+  }
   const maxOrderAmount = parseDecimal(
     settings.maxOrderUsdc,
     usdcDecimals,
@@ -267,6 +291,19 @@ async function deployVenueAndTrigger(
     [usdc, priceFeed, settings.venueFeeBps],
     { client },
   );
+  // FillReceipt takes the next transaction count of the deploying account and
+  // LedgerTrigger the one after; nothing else may be sent in between.
+  const nonce = await publicClient.getTransactionCount({
+    address: deployer.account.address,
+    blockTag: "pending",
+  });
+  const triggerToBe = getContractAddress({
+    from: deployer.account.address,
+    nonce: BigInt(nonce) + 1n,
+  });
+  const fillReceipt = await viem.deployContract("FillReceipt", [triggerToBe], {
+    client,
+  });
   const { contract: trigger, deploymentTransaction } =
     await viem.sendDeploymentTransaction(
       "LedgerTrigger",
@@ -280,6 +317,7 @@ async function deployVenueAndTrigger(
         settings.maxSlippageBps,
         settings.maxPeriodsPerOrder,
         settings.maxTiersPerOrder,
+        fillReceipt.address,
       ],
       { client },
     );
@@ -299,6 +337,7 @@ async function deployVenueAndTrigger(
     maxSlippageBps: await trigger.read.maxSlippageBps(),
     maxPeriodsPerOrder: await trigger.read.maxPeriodsPerOrder(),
     maxTiersPerOrder: await trigger.read.maxTiersPerOrder(),
+    receipt: await trigger.read.receipt(),
   };
   const requested: TriggerParameters = {
     usdc,
@@ -310,6 +349,7 @@ async function deployVenueAndTrigger(
     maxSlippageBps: settings.maxSlippageBps,
     maxPeriodsPerOrder: settings.maxPeriodsPerOrder,
     maxTiersPerOrder: settings.maxTiersPerOrder,
+    receipt: fillReceipt.address,
   };
   for (const key of Object.keys(requested) as (keyof TriggerParameters)[]) {
     const asked = requested[key];
@@ -324,16 +364,23 @@ async function deployVenueAndTrigger(
       );
     }
   }
+  const receiptBoundTo = await fillReceipt.read.trigger();
+  if (receiptBoundTo.toLowerCase() !== trigger.address.toLowerCase()) {
+    throw new ScriptError(
+      "FillReceipt read back from the chain is not bound to the LedgerTrigger just deployed.",
+    );
+  }
   return {
     venue,
     trigger: trigger.address,
+    receiptBoundTo,
     triggerBlock: receipt.blockNumber,
     parameters,
     venueFeeBps: await venue.read.feeBps(),
   };
 }
 
-/** Mock-parts mode: deploys all four contracts and stocks the venue. */
+/** Mock-parts mode: deploys all five contracts and stocks the venue. */
 export async function deployWithMocks(input: {
   readonly viem: Viem;
   readonly confirmation: string | undefined;
@@ -403,9 +450,11 @@ export async function deployWithMocks(input: {
       "MockUSDC",
       "MockPriceFeed",
       "MockSwapVenue",
+      "FillReceipt",
       "LedgerTrigger",
     ],
     trigger: deployed.trigger,
+    receiptBoundTo: deployed.receiptBoundTo,
     triggerBlock: deployed.triggerBlock,
     parameters: deployed.parameters,
     usdcDecimals,
@@ -421,7 +470,8 @@ export async function deployWithMocks(input: {
 
 /**
  * External-parts mode: checks the given USDC and price feed, then deploys the
- * swap venue and LedgerTrigger. Sends nothing when the check fails.
+ * swap venue, FillReceipt and LedgerTrigger. Sends nothing when the check
+ * fails.
  */
 export async function deployWithExternalParts(input: {
   readonly viem: Viem;
@@ -464,8 +514,9 @@ export async function deployWithExternalParts(input: {
     report: {
       chainId,
       deployer: deployer.account.address,
-      deployedNow: ["MockSwapVenue", "LedgerTrigger"],
+      deployedNow: ["MockSwapVenue", "FillReceipt", "LedgerTrigger"],
       trigger: deployed.trigger,
+      receiptBoundTo: deployed.receiptBoundTo,
       triggerBlock: deployed.triggerBlock,
       parameters: deployed.parameters,
       usdcDecimals: check.usdcDecimals,
@@ -514,6 +565,7 @@ export function formatDeployment(report: DeploymentReport): string[] {
     `  USDC token      ${p.usdc}  (${now("MockUSDC")})`,
     `  Price feed      ${p.priceFeed}  (${now("MockPriceFeed")})`,
     `  Swap venue      ${p.swapVenue}  (deployed now; fee ${report.venueFeeBps} basis points; holds ${formatDecimal(report.venueEth, ETH_DECIMALS)} ETH)`,
+    `  FillReceipt     ${p.receipt}  (deployed now; issues a receipt for each fill)`,
     `  LedgerTrigger   ${report.trigger}  (deployed now, in block ${report.triggerBlock})`,
     "LedgerTrigger parameters, read back from the chain:",
     `  usdc                    ${p.usdc}`,
@@ -525,6 +577,8 @@ export function formatDeployment(report: DeploymentReport): string[] {
     `  maxSlippageBps          ${p.maxSlippageBps} (basis points; ${percent(p.maxSlippageBps)})`,
     `  maxPeriodsPerOrder      ${p.maxPeriodsPerOrder} (periods per time-scheduled order)`,
     `  maxTiersPerOrder        ${p.maxTiersPerOrder} (tiers per tiered order)`,
+    `  receipt                 ${p.receipt} (the receipt contract)`,
+    `FillReceipt, read back from the chain, is bound to ${report.receiptBoundTo}: this LedgerTrigger, the only address that can issue its receipts.`,
     `Price feed: ${report.feedDecimals} decimals, latest price ${formatDecimal(report.latestPrice, report.feedDecimals)} USD.`,
     `The deploying account holds ${formatDecimal(report.deployerUsdc, report.usdcDecimals)} USDC.`,
     `LedgerTrigger was deployed in block ${report.triggerBlock}: use it as KEEPER_FROM_BLOCK.`,

@@ -109,7 +109,7 @@ describe("deployment settings from the environment", () => {
 });
 
 describe("deployment with mock parts", () => {
-  it("deploys four contracts, stocks the venue, and reads back exactly the default parameters", async () => {
+  it("deploys five contracts, stocks the venue, and reads back exactly the default parameters", async () => {
     const s = await setUpScripts();
 
     const report = await deployWithMocks({
@@ -128,6 +128,7 @@ describe("deployment with mock parts", () => {
       "MockUSDC",
       "MockPriceFeed",
       "MockSwapVenue",
+      "FillReceipt",
       "LedgerTrigger",
     ]);
     assert.equal(p.maxOrderAmount, 500n * ONE_USDC);
@@ -183,6 +184,7 @@ describe("deployment with mock parts", () => {
       maxSlippageBps: await trigger.read.maxSlippageBps(),
       maxPeriodsPerOrder: await trigger.read.maxPeriodsPerOrder(),
       maxTiersPerOrder: await trigger.read.maxTiersPerOrder(),
+      receipt: await trigger.read.receipt(),
     });
     assert.equal(report.parameters.maxOrderAmount, 250_500_000n);
     assert.equal(report.parameters.maxPriceAge, 3_600n);
@@ -255,7 +257,7 @@ describe("deployment with mock parts", () => {
 });
 
 describe("deployment with external parts", () => {
-  it("deploys only the swap venue and LedgerTrigger, which uses exactly the two given addresses", async () => {
+  it("deploys only the swap venue, FillReceipt and LedgerTrigger, which uses exactly the two given addresses", async () => {
     const s = await setUpScripts();
     const usdc = await s.viem.deployContract("MockUSDC");
     const feed = await s.viem.deployContract("MockPriceFeed", [
@@ -272,9 +274,14 @@ describe("deployment with external parts", () => {
       priceFeed: feed.address,
     });
 
-    // One block per transaction: the venue and LedgerTrigger, nothing else.
-    assert.equal(await s.blockNumber(), blockBefore + 2n);
-    assert.deepEqual(report.deployedNow, ["MockSwapVenue", "LedgerTrigger"]);
+    // One block per transaction: the venue, FillReceipt and LedgerTrigger,
+    // nothing else.
+    assert.equal(await s.blockNumber(), blockBefore + 3n);
+    assert.deepEqual(report.deployedNow, [
+      "MockSwapVenue",
+      "FillReceipt",
+      "LedgerTrigger",
+    ]);
     const trigger = await s.viem.getContractAt("LedgerTrigger", report.trigger);
     assert.equal(await trigger.read.usdc(), getAddress(usdc.address));
     assert.equal(await trigger.read.priceFeed(), getAddress(feed.address));

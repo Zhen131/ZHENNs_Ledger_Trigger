@@ -1,8 +1,9 @@
 // Entry point of `npm run deploy:mocks`: deploys MockUSDC, MockPriceFeed,
-// MockSwapVenue (stocked with ETH) and LedgerTrigger, for a local chain.
-// Settings come from environment variables (see the README); the ones not set
-// take their defaults. Prints every address, the parameters with their units
-// and the block LedgerTrigger was deployed in.
+// MockSwapVenue (stocked with ETH), FillReceipt and LedgerTrigger, for a local
+// chain. Settings come from environment variables (see the README); the ones
+// not set take their defaults. Prints every address, the parameters with their
+// units, the address FillReceipt is bound to and the block LedgerTrigger was
+// deployed in.
 
 import {
   deploySettingsFrom,
