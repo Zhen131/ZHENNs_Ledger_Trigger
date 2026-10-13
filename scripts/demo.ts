@@ -1,15 +1,28 @@
-// The demo: six of the order contract's test scenarios, played on a fresh
-// local chain, two that must succeed and four that must be rejected.
+// The demo: thirteen of the contracts' test scenarios, played on a
+// fresh local chain. First six about plain limit orders, two that must succeed
+// and four that must be rejected:
 //
 //   S01 normal fill (filled by the keeper's round), S03 cancel, S04 a stranger
 //   fills, S06 the price is above the target, S07 a second fill of the same
 //   order, S15 the allowance is too small.
 //
-// Each scenario uses a new order of its own. What each one should lead to is
-// written in EXPECTED below, in the words of the scenario table. What it led
-// to is read from the chain, item by item: statuses from `statusOf`, the name
-// of the error a rejected call reverted with, and balance changes. A scenario
-// passes when the two lists are equal.
+// Then seven about dormant, Dca and Ladder orders and fill receipts, played
+// by the files named in brackets:
+//
+//   S27 a dormant order activated by the keeper's round, then filled; S29 a
+//   fill while the order is dormant (demoDormant.ts); S37 a Dca order's first
+//   period; S38 a second fill in the same period, then the next period one
+//   period later (demoDca.ts); S50 a Ladder order's tiers filled in order by
+//   the keeper's rounds (demoLadder.ts); S56 a fill issues a receipt; S57 a
+//   receipt cannot be transferred (demoReceipt.ts).
+//
+// Each scenario uses a new order of its own, except S38, which goes on with
+// the order of S37, and S57, which goes on with the receipt of S56. What each
+// one should lead to is written in EXPECTED below, in the words of the
+// scenario table. What it led to is read from the chain, item by item:
+// statuses from `statusOf`, the name of the error a rejected call reverted
+// with, events, and balance changes. A scenario passes when the two lists are
+// equal.
 //
 // Accounts are Hardhat's test accounts: #0 places the orders (and deploys),
 // #1 is the executor named in each order and runs the keeper, #2 receives the
@@ -31,6 +44,8 @@ import {
   MOCK_FEED_DECIMALS,
   deployWithMocks,
 } from "./deploy.ts";
+import { demoChain } from "./demoChain.ts";
+import { playDormant } from "./demoDormant.ts";
 import { mined } from "./mined.ts";
 import { ScriptError, revertName } from "./scriptError.ts";
 import { GatedScript, openSendGate } from "./sendGate.ts";
@@ -45,6 +60,8 @@ export const DEMO_SCENARIOS = [
   "S06",
   "S07",
   "S15",
+  "S27",
+  "S29",
 ] as const;
 export type DemoScenario = (typeof DEMO_SCENARIOS)[number];
 
@@ -86,9 +103,28 @@ export const EXPECTED: Readonly<
       "after topping up the allowance: Open -> Filled",
     ],
   },
+  S27: {
+    title: "Dormant order activated, then filled",
+    expected: [
+      "placed Dormant, counted in the owner's open orders",
+      "Dormant -> Open -> Filled",
+      "OrderActivated: by the executor, at the feed price",
+    ],
+  },
+  S29: {
+    title: "Fill while dormant",
+    expected: [
+      "transaction rejected: OrderNotOpen, status Dormant",
+      "canFill: no, Dormant",
+      "order afterwards: Dormant",
+    ],
+  },
 };
 
-/** The made-up numbers every scenario uses, as people write them. */
+/**
+ * The made-up numbers S01 to S15 use, as people write them. The later
+ * scenarios set their own, in their files, and print them.
+ */
 export const DEMO_NUMBERS = {
   /** The price feed's first price, above the target. */
   startPriceUsd: "2100",
@@ -116,6 +152,14 @@ export type DemoRow = {
   /** Numbers and keeper log lines behind the actual result. */
   readonly details: readonly string[];
   readonly pass: boolean;
+};
+
+/** A later scenario's row as its file hands it back, before it is judged. */
+export type PlayedRow = {
+  readonly id: DemoScenario;
+  readonly did: readonly string[];
+  readonly actual: readonly string[];
+  readonly details: readonly string[];
 };
 
 export type DemoResult = {
@@ -159,7 +203,7 @@ function outcome(result: Attempt): string {
   return result.accepted ? "accepted" : `rejected: ${result.errorName}`;
 }
 
-/** Plays the six scenarios on the chain of `viem`. */
+/** Plays the scenarios on the chain of `viem`, in the order of DEMO_SCENARIOS. */
 export async function runDemo(input: {
   readonly viem: Viem;
   readonly confirmation: string | undefined;
@@ -455,12 +499,26 @@ export async function runDemo(input: {
     );
   }
 
+  // The later scenarios, each from its own file, on the same chain.
+  const chain = await demoChain({
+    viem,
+    clients: { publicClient, walletClients, client },
+    deployment,
+    accounts: { owner, keeper, recipient, stranger },
+  });
+  for (const play of [playDormant]) {
+    for (const played of await play(chain)) {
+      row(played.id, played.did, played.actual, played.details);
+    }
+  }
+
   return {
     chainId,
     contracts: {
       MockUSDC: params.usdc,
       MockPriceFeed: params.priceFeed,
       MockSwapVenue: params.swapVenue,
+      FillReceipt: params.receipt,
       LedgerTrigger: deployment.trigger,
     },
     rows,
@@ -469,5 +527,5 @@ export async function runDemo(input: {
 
 /** The demo's numbers as one line, for the header. */
 export function describeNumbers(): string {
-  return `Each order: ${DEMO_NUMBERS.orderUsdc} USDC at a target of ${DEMO_NUMBERS.targetPriceUsd} USD, valid for ${DEMO_NUMBERS.validMinutes / 60n} hours. The price starts at ${DEMO_NUMBERS.startPriceUsd} USD (feed with ${MOCK_FEED_DECIMALS} decimals). The swap venue holds ${DEMO_NUMBERS.venueEth} ETH; the owner holds ${DEMO_NUMBERS.ownerUsdc} USDC.`;
+  return `Each order of S01 to S15: ${DEMO_NUMBERS.orderUsdc} USDC at a target of ${DEMO_NUMBERS.targetPriceUsd} USD, valid for ${DEMO_NUMBERS.validMinutes / 60n} hours; the later scenarios give their own numbers under "Did:". The price starts at ${DEMO_NUMBERS.startPriceUsd} USD (feed with ${MOCK_FEED_DECIMALS} decimals). The swap venue holds ${DEMO_NUMBERS.venueEth} ETH; the owner holds ${DEMO_NUMBERS.ownerUsdc} USDC.`;
 }

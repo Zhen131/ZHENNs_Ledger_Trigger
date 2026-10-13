@@ -83,3 +83,17 @@ export function describeFailure(error: unknown): string {
   }
   return `The script stopped on an error it did not expect (${errorTypes(error).join(" > ") || "unknown"}). Its message is not shown, because it may hold the node URL.`;
 }
+
+/**
+ * The values the contract error that `error` comes from carries, in the order
+ * the error declares them, such as the order ID and the stored status of
+ * `OrderNotOpen`; undefined when it is not a contract revert that the ABI of
+ * the call can name.
+ */
+export function revertValues(error: unknown): readonly unknown[] | undefined {
+  if (!(error instanceof BaseError)) return undefined;
+  const revert = error.walk((e) => e instanceof ContractFunctionRevertedError);
+  if (!(revert instanceof ContractFunctionRevertedError)) return undefined;
+  if (revert.data === undefined) return undefined;
+  return revert.data.args ?? [];
+}
