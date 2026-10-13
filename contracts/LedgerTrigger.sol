@@ -26,6 +26,11 @@ import {ISwapVenue} from "./interfaces/ISwapVenue.sol";
 /// target price. A period that passes without a fill is skipped for good. The owner approves the
 /// whole budget once; each fill takes the amount of one period. Such an order is partly filled
 /// after its first fill and filled after its last.
+/// An order can also be laddered: it has a few tiers, each a price and an amount of USDC, at
+/// strictly falling prices. Its tiers are bought one at a time, in order: each fill buys the next
+/// tier's amount at no more than that tier's price, so a price that falls through several tiers
+/// at once still fills only the next one. Here too the owner approves the whole budget once, and
+/// the order is partly filled after its first fill and filled after its last.
 /// @dev There is no admin: no pause, no upgrade, no setter and no withdrawal. The nine deployment
 /// parameters can never change. The status `Expired` is never stored; `statusOf` works it out from
 /// the expiry. A fill keeps none of the USDC and ETH it moves: it passes all of both straight
@@ -44,8 +49,9 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @notice What kind of order it is.
     /// @dev `Limit`: one fill that spends the whole amount, at no more than the target price.
     /// `Dca`: a set amount bought once per period over a number of periods. `Ladder`: amounts
-    /// bought one tier at a time, at falling prices. Every order this contract places is a
-    /// `Limit` or a `Dca` order.
+    /// bought one tier at a time, at falling prices. `createOrder` and `createDormantOrder` place
+    /// `Limit` orders, `createDcaOrder` places `Dca` orders and `createLadderOrder` places
+    /// `Ladder` orders.
     enum OrderKind {
         Limit,
         Dca,
@@ -75,10 +81,12 @@ contract LedgerTrigger is ReentrancyGuard {
     /// current period has been bought already. `InvalidPrice`: the feed's price is zero or below,
     /// or its update time is after the current block's time. `StalePrice`: the price is older than
     /// `maxPriceAge`. `PriceAboveTarget`: the price is above the most this fill may pay, which is
-    /// the order's target price: for a `Dca` order, the cap of every period. `InsufficientAllowance`:
-    /// the owner's USDC allowance to this contract is below the amount of this fill, which for a
-    /// `Dca` order is its amount per period. `InsufficientBalance`: the owner's USDC balance is
-    /// below the amount of this fill. When several apply, the first in this list is reported.
+    /// the order's target price: for a `Dca` order, the cap of every period; for a `Ladder` order,
+    /// the price of its next tier. `InsufficientAllowance`: the owner's USDC allowance to this
+    /// contract is below the amount of this fill, which for a `Dca` order is its amount per
+    /// period and for a `Ladder` order the amount of its next tier. `InsufficientBalance`: the
+    /// owner's USDC balance is below the amount of this fill. When several apply, the first in
+    /// this list is reported.
     enum FillBlocker {
         None,
         NotOpen,
@@ -114,10 +122,12 @@ contract LedgerTrigger is ReentrancyGuard {
     /// the owner names for activating and filling it. `recipient` receives the ETH. `kind` is the
     /// kind of order. `status` is the stored status and is never `Expired`. `usdcAmount` is the
     /// USDC budget of the whole order, in the token's smallest unit: for a `Dca` order, its amount
-    /// per period times its number of periods. `usdcRemaining` is the part
+    /// per period times its number of periods; for a `Ladder` order, the amounts of its tiers
+    /// added up. `usdcRemaining` is the part
     /// of that budget not spent yet: `usdcAmount` when the order is placed, less the amount of
     /// each fill. `targetPrice` is the ETH price in USD, with the price feed's decimals, above
-    /// which a fill is refused. `activationPrice` is zero for an order that is `Open` once placed;
+    /// which a fill is refused; for a `Ladder` order it is the price of tier 0, the highest, and
+    /// each fill is held to the price of the tier it buys. `activationPrice` is zero for an order that is `Open` once placed;
     /// otherwise the order is placed `Dormant` and can be activated once the price is at or above
     /// it, and it keeps its value after the activation. `fillsTotal` is how many fills the order
     /// takes in all, and `fillsDone` how many it has had. `createdAt` is the time of the block
@@ -184,12 +194,38 @@ contract LedgerTrigger is ReentrancyGuard {
         address executor;
     }
 
+    /// @notice One tier of a `Ladder` order: a price and the USDC that the tier spends once the
+    /// price feed reports a price at or below it.
+    /// @dev Fields: `price` is the most this tier's fill may pay, an ETH price in USD with the
+    /// price feed's decimals. `usdcAmount` is the USDC this tier's fill spends, in the token's
+    /// smallest unit.
+    struct Tier {
+        uint256 price;
+        uint256 usdcAmount;
+    }
+
+    /// @notice The inputs of `createLadderOrder`.
+    /// @dev Fields: `tiers` are the order's tiers, in the order they are filled: tier 0 has the
+    /// highest price and is filled first, and each later tier's price is strictly below the one
+    /// before it. `activationPrice` is zero for an order that is `Open` once placed; otherwise the
+    /// order is placed `Dormant`, and the price must be above the price of tier 0. `recipient`
+    /// receives the ETH, and `executor` is the address the owner names for activating and filling
+    /// the order. `expiry` is the last second, in Unix time, at which the order is valid.
+    struct LadderOrderParams {
+        Tier[] tiers;
+        uint256 activationPrice;
+        address recipient;
+        address executor;
+        uint256 expiry;
+    }
+
     /// @notice What the fill checks found for one order: the first reason it cannot be filled,
     /// and the values read on the way.
     /// @dev Fields: `blocker` is `None` when the order can be filled. `amount` is the USDC this
     /// fill spends and `priceCap` the highest feed price at which it may go ahead: a `Limit`
     /// order spends all of its `usdcRemaining` and a `Dca` order the `usdcPerPeriod` of its
-    /// schedule, both with the order's `targetPrice` as the cap. `price` and `updatedAt` are the
+    /// schedule, both with the order's `targetPrice` as the cap; a `Ladder` order spends the
+    /// amount of its next tier, with that tier's price as the cap. `price` and `updatedAt` are the
     /// feed's answer and update time. `allowance` and `balance` are the owner's USDC allowance to
     /// this contract and USDC balance. `period` is, for a `Dca` order, the current period,
     /// counting from 0. A value is zero when the checks stopped before working it out or reading
@@ -232,8 +268,9 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @dev Anyone can read it; reading it never reverts.
     ISwapVenue public immutable swapVenue;
     /// @notice Largest amount of USDC one fill may spend, in the token's smallest unit: the whole
-    /// `usdcAmount` of a `Limit` order, the amount per period of a `Dca` order, whose whole budget
-    /// may be above it. Set at deployment, never changes.
+    /// `usdcAmount` of a `Limit` order, the amount per period of a `Dca` order, the amount of each
+    /// tier of a `Ladder` order. The whole budget of a `Dca` or `Ladder` order may be above it.
+    /// Set at deployment, never changes.
     /// @dev Anyone can read it; reading it never reverts.
     uint256 public immutable maxOrderAmount;
     /// @notice Largest number of unfinished orders one owner can have at the same time. Set at
@@ -269,6 +306,9 @@ contract LedgerTrigger is ReentrancyGuard {
     uint256 private lastOrderId;
     /// @notice Order ID to schedule, for `Dca` orders only.
     mapping(uint256 orderId => DcaSchedule schedule) private schedules;
+    /// @notice Order ID to tiers, for `Ladder` orders only. The tiers are stored as given and never
+    /// change; the order's `fillsDone` is the index of its next tier.
+    mapping(uint256 orderId => Tier[] tiers) private tiersOf;
 
     /// @notice An order was placed.
     /// @param orderId ID of the new order.
@@ -308,6 +348,13 @@ contract LedgerTrigger is ReentrancyGuard {
         uint256 periodCount,
         uint256 usdcPerPeriod
     );
+
+    /// @notice A `Ladder` order was placed. Emitted right after its `OrderCreated`.
+    /// @dev Only `orderId` is indexed: an indexed array of structs would be logged as its hash
+    /// alone, and the tiers could not be read back from the log.
+    /// @param orderId ID of the new order.
+    /// @param tiers All of its tiers, as given, in the order they are filled.
+    event OrderTiered(uint256 indexed orderId, Tier[] tiers);
 
     /// @notice A dormant order was activated: it is `Open` from now on.
     /// @param orderId ID of the order.
@@ -364,14 +411,17 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @param orderId The order.
     /// @param status Its stored status.
     error OrderNotOpen(uint256 orderId, OrderStatus status);
-    /// @notice The order amount, or the amount per period of a `Dca` order, is zero.
+    /// @notice The order amount, or the amount per period of a `Dca` order, or the amount of a
+    /// tier of a `Ladder` order, is zero.
     error ZeroAmount();
-    /// @notice The order amount, or the amount per period of a `Dca` order, is above
-    /// `maxOrderAmount`.
-    /// @param amount The amount asked for: the order amount, or the amount per period.
+    /// @notice The order amount, or the amount per period of a `Dca` order, or the amount of a
+    /// tier of a `Ladder` order, is above `maxOrderAmount`.
+    /// @param amount The amount asked for: the order amount, the amount per period, or the amount
+    /// of the tier.
     /// @param max The largest amount allowed.
     error AmountAboveMax(uint256 amount, uint256 max);
-    /// @notice The target price, which for a `Dca` order is the cap of every period, is zero.
+    /// @notice The target price, which for a `Dca` order is the cap of every period, or the price
+    /// of a tier of a `Ladder` order, is zero.
     error ZeroTargetPrice();
     /// @notice The recipient is the zero address.
     error ZeroRecipient();
@@ -403,17 +453,19 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @param maxPriceAge The oldest price age allowed, in seconds.
     error StalePrice(uint256 updatedAt, uint256 maxPriceAge);
     /// @notice The price feed's price is above the most this fill may pay: the order's target
-    /// price, which for a `Dca` order is the cap of every period.
+    /// price, which for a `Dca` order is the cap of every period, or for a `Ladder` order the
+    /// price of its next tier.
     /// @param price The price the feed reported.
     /// @param targetPrice The most this fill may pay.
     error PriceAboveTarget(uint256 price, uint256 targetPrice);
     /// @notice The owner's USDC allowance to this contract is below the amount of this fill, which
-    /// for a `Dca` order is its amount per period.
+    /// for a `Dca` order is its amount per period and for a `Ladder` order the amount of its next
+    /// tier.
     /// @param allowance The allowance the owner has given.
     /// @param needed The amount of this fill.
     error InsufficientAllowance(uint256 allowance, uint256 needed);
     /// @notice The owner's USDC balance is below the amount of this fill, which for a `Dca` order
-    /// is its amount per period.
+    /// is its amount per period and for a `Ladder` order the amount of its next tier.
     /// @param balance The owner's balance.
     /// @param needed The amount of this fill.
     error InsufficientBalance(uint256 balance, uint256 needed);
@@ -456,9 +508,10 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @param price The price the feed reported.
     /// @param activationPrice The order's activation price.
     error PriceBelowActivation(uint256 price, uint256 activationPrice);
-    /// @notice The activation price of a dormant order is not above its target price.
+    /// @notice The activation price of a dormant order is not above its target price, which for a
+    /// `Ladder` order is the price of tier 0.
     /// @param activationPrice The activation price asked for.
-    /// @param targetPrice The target price asked for.
+    /// @param targetPrice The target price asked for, or the price of tier 0.
     error ActivationNotAboveTarget(
         uint256 activationPrice,
         uint256 targetPrice
@@ -490,6 +543,19 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @notice The order is not a `Dca` order, so it has no schedule.
     /// @param orderId The order.
     error NotADcaOrder(uint256 orderId);
+    /// @notice A `Ladder` order was given no tiers.
+    error NoTiers();
+    /// @notice A `Ladder` order was given more tiers than `maxTiersPerOrder`.
+    /// @param tierCount The number of tiers given.
+    /// @param maxTiers The largest number of tiers allowed.
+    error TooManyTiers(uint256 tierCount, uint256 maxTiers);
+    /// @notice The price of a tier of a `Ladder` order is not strictly below the price of the tier
+    /// before it.
+    /// @param tierIndex The tier, counting from 0; never 0, as tier 0 has no tier before it.
+    error TiersNotDescending(uint256 tierIndex);
+    /// @notice The order is not a `Ladder` order, so it has no tiers.
+    /// @param orderId The order.
+    error NotALadderOrder(uint256 orderId);
 
     /// @notice Rejects an ID that no order has, with `OrderNotFound`.
     /// @param orderId The order.
@@ -564,7 +630,8 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @param priceFeed_ The price feed for ETH in USD (a Chainlink-style feed address).
     /// @param swapVenue_ The swap venue (an `ISwapVenue` address).
     /// @param maxOrderAmount_ Largest amount one fill may spend, in the token's smallest unit: the
-    /// amount of a `Limit` order, the amount per period of a `Dca` order (uint256).
+    /// amount of a `Limit` order, the amount per period of a `Dca` order, the amount of each tier
+    /// of a `Ladder` order (uint256).
     /// @param maxOpenOrdersPerOwner_ Largest number of unfinished orders per owner (uint256).
     /// @param maxPriceAge_ Oldest acceptable price age, in seconds (uint256).
     /// @param maxSlippageBps_ Allowed slippage, in basis points (uint256).
@@ -764,6 +831,62 @@ contract LedgerTrigger is ReentrancyGuard {
         );
     }
 
+    /// @notice Places a `Ladder` order for the caller, who becomes its owner: it buys ETH one tier
+    /// at a time, in the order of `p.tiers`. Each fill spends the amount of the next tier, at no
+    /// more than that tier's price; a price that falls through several tiers at once still fills
+    /// only the next one, and a tier is never skipped or joined with another. The order's budget
+    /// is the amounts of its tiers added up, and its target price is the price of tier 0, the
+    /// highest. Moves no tokens and no ETH, and needs no USDC allowance; each fill needs the
+    /// allowance to cover the amount of the next tier.
+    /// @dev Anyone can call it. Rejects, in this order: no tiers (`NoTiers`); more tiers than
+    /// `maxTiersPerOrder` (`TooManyTiers`; exactly that many is allowed); then, tier by tier from
+    /// tier 0, each tier checked in full before the next: a zero amount (`ZeroAmount`), an amount
+    /// above `maxOrderAmount` (`AmountAboveMax`; the budget itself may be above it), a zero price
+    /// (`ZeroTargetPrice`), and from tier 1 on a price not strictly below the tier before
+    /// (`TiersNotDescending`); then an `activationPrice` above zero that is not above the price of
+    /// tier 0 (`ActivationNotAboveTarget`); a zero `recipient` (`ZeroRecipient`); a zero
+    /// `executor` (`ZeroExecutor`); an `expiry` not after the current block's time
+    /// (`ExpiryNotInFuture`); a caller who already has `maxOpenOrdersPerOwner` unfinished orders,
+    /// expired ones included (`TooManyOpenOrders`). With an `activationPrice` above zero the order
+    /// is placed `Dormant` and must be activated before it can be filled. The order takes one of
+    /// the owner's slots and adds its whole budget to the owner's open total. The tiers are stored
+    /// as given and never change. The executor may be the caller. Emits `OrderCreated`, then
+    /// `OrderTiered`.
+    /// @param p The order (a `LadderOrderParams` struct): `tiers`, each a `price`, the ETH price
+    /// in USD with the price feed's decimals that the tier may pay at most, and a `usdcAmount`, in
+    /// the token's smallest unit; `activationPrice`, zero or the price at or above which the order
+    /// can be activated; `recipient`; `executor`; `expiry`, the last second, in Unix time, at
+    /// which the order is valid.
+    /// @return orderId ID of the new order, numbered with the orders of the other kinds
+    /// (uint256).
+    function createLadderOrder(
+        LadderOrderParams calldata p
+    ) external returns (uint256 orderId) {
+        uint256 budget = _requireValidTiers(p.tiers);
+        uint256 topPrice = p.tiers[0].price;
+        if (p.activationPrice > 0 && !(p.activationPrice > topPrice)) {
+            revert ActivationNotAboveTarget(p.activationPrice, topPrice);
+        }
+        _requireValidPartiesExpiryAndSlot(p.recipient, p.executor, p.expiry);
+        orderId = _placeOrder(
+            OrderKind.Ladder,
+            budget,
+            topPrice,
+            p.activationPrice,
+            p.tiers.length,
+            p.recipient,
+            p.executor,
+            p.expiry
+        );
+        Tier[] storage tiers = tiersOf[orderId];
+        uint256 tierCount = p.tiers.length;
+        for (uint256 i = 0; i < tierCount; ++i) {
+            tiers.push(p.tiers[i]);
+        }
+
+        emit OrderTiered(orderId, p.tiers);
+    }
+
     /// @notice Activates a dormant order once the price has risen to its activation price: the
     /// order goes from `Dormant` to `Open` and can be filled from then on. Moves no tokens and no
     /// ETH, calls neither the USDC token nor the swap venue, and leaves the owner's open count and
@@ -805,7 +928,10 @@ contract LedgerTrigger is ReentrancyGuard {
     /// the swap venue and sends all of that ETH to the order's recipient. A `Limit` order is
     /// filled once, for all of its `usdcRemaining`, at no more than its target price. A `Dca`
     /// order is filled at most once in each period of its schedule, for its amount per period, at
-    /// no more than its target price; a period that passes without a fill is skipped for good.
+    /// no more than its target price; a period that passes without a fill is skipped for good. A
+    /// `Ladder` order is filled one tier at a time, in order, for the amount of its next tier, at
+    /// no more than that tier's price; one call fills one tier only, even when the price is below
+    /// several of them.
     /// @dev Only the order's owner or its executor can call it. It takes no address and no
     /// instruction from the caller: the token, the price feed and the swap venue are fixed at
     /// deployment, and the recipient is fixed in the order. Rejects, in this order: a call made
@@ -817,14 +943,17 @@ contract LedgerTrigger is ReentrancyGuard {
     /// for a `Dca` order its period 0 not begun yet (`NotStarted`) or its current period bought
     /// already (`PeriodAlreadyFilled`), price zero or below or updated after the current block's
     /// time (`InvalidPrice`), price older than `maxPriceAge` (`StalePrice`), price above the
-    /// target price (`PriceAboveTarget`), owner's allowance below the amount of this fill
-    /// (`InsufficientAllowance`), owner's balance below the amount of this fill
+    /// price cap of this fill (`PriceAboveTarget`), owner's allowance below the amount of this
+    /// fill (`InsufficientAllowance`), owner's balance below the amount of this fill
     /// (`InsufficientBalance`). The amount of this fill is the order's `usdcRemaining` for a
-    /// `Limit` order and its amount per period for a `Dca` order. A price exactly `maxPriceAge`
-    /// old counts as fresh, and a price equal to the target price can fill. Then it counts the
-    /// fill and takes its amount off the order's `usdcRemaining` and off the owner's open total;
-    /// for a `Dca` order it records the current period as bought, so the next fill can only come
-    /// in a later period; on the order's last fill it marks the order `Filled` and takes it off
+    /// `Limit` order, its amount per period for a `Dca` order and the amount of its next tier for
+    /// a `Ladder` order; the price cap of this fill is the order's target price, or for a `Ladder`
+    /// order the price of its next tier. A price exactly `maxPriceAge` old counts as fresh, and a
+    /// price equal to the price cap can fill. Then it counts the fill and takes its amount off
+    /// the order's `usdcRemaining` and off the owner's open total; for a `Dca` order it records
+    /// the current period as bought, so the next fill can only come in a later period; for a
+    /// `Ladder` order the higher fill count points at its next tier; on the order's last fill it
+    /// marks the order `Filled` and takes it off
     /// the owner's open count, and on any earlier fill it marks the order `PartiallyFilled`. Then
     /// it takes the amount from the owner, approves the swap venue for that amount and swaps it
     /// with a minimum ETH output. It trusts its own balances, not the venue's return value:
@@ -841,7 +970,7 @@ contract LedgerTrigger is ReentrancyGuard {
     /// returns false when tried again, makes the fill revert with `SafeERC20FailedOperation`. Any
     /// rejection undoes the whole call: the order keeps the status it had, and no USDC or ETH
     /// moves. The minimum ETH output, in wei, is the larger of
-    /// `amount * 10^k / targetPrice` (never pay more than the target price) and
+    /// `amount * 10^k / priceCap` (never pay more than the price cap of this fill) and
     /// `amount * 10^k * (10000 - maxSlippageBps) / (price * 10000)` (never get much less than
     /// the feed price gives), each worked out in full and rounded down once, with
     /// k = 18 + price feed decimals - USDC decimals.
@@ -954,6 +1083,22 @@ contract LedgerTrigger is ReentrancyGuard {
         return schedules[orderId];
     }
 
+    /// @notice Returns all the tiers of a `Ladder` order, as they were given when it was placed,
+    /// in the order they are filled. The order's `fillsDone` is the index of its next tier.
+    /// @dev Anyone can call it, whatever the order's status: a filled, cancelled or expired
+    /// `Ladder` order still has its tiers. Rejects, in this order: an ID that no order has
+    /// (`OrderNotFound`), ID 0 included; an order of another kind (`NotALadderOrder`).
+    /// @param orderId The order (uint256).
+    /// @return tiers The stored tiers (an array of `Tier` structs).
+    function getTiers(
+        uint256 orderId
+    ) external view orderExists(orderId) returns (Tier[] memory tiers) {
+        if (orders[orderId].kind != OrderKind.Ladder) {
+            revert NotALadderOrder(orderId);
+        }
+        return tiersOf[orderId];
+    }
+
     /// @notice Returns the status of an order as it stands now: `Expired` for an order stored as
     /// `Dormant`, `Open` or `PartiallyFilled` whose expiry is before the current block's time,
     /// otherwise the stored status. At the expiry second itself the order keeps its stored status.
@@ -977,8 +1122,11 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @dev Anyone can call it. It does not look at the caller, so it says nothing about who may
     /// fill the order. Rejects an ID that no order has (`OrderNotFound`), ID 0 included. It runs
     /// the very checks that `fillOrder` runs after checking the caller, in the same order: stored
-    /// status, expiry, for a `Dca` order its period (not started, current period bought already),
-    /// price, allowance, balance. It does not try the swap, so a fill it reports as
+    /// status (it goes on only for `Open` or `PartiallyFilled`), expiry, for a `Dca` order its
+    /// period (not started, current period bought already), price (against the target price, or
+    /// for a `Ladder` order the price of its next tier), allowance and balance (against the
+    /// amount of this fill: for a `Ladder` order, the amount of its next tier). It does not try
+    /// the swap, so a fill it reports as
     /// possible can fail at the swap venue or when sending the ETH. It also reverts if the price
     /// feed or the USDC token reverts when it reads them.
     /// @param orderId The order (uint256).
@@ -1038,11 +1186,12 @@ contract LedgerTrigger is ReentrancyGuard {
         return openOrdersOf[owner].total;
     }
 
-    /// @notice Checks the amount and the target price of a new order: rejects a zero amount
-    /// (`ZeroAmount`), an amount above `maxOrderAmount` (`AmountAboveMax`) and a zero target price
-    /// (`ZeroTargetPrice`), in this order.
-    /// @param usdcAmount The amount asked for.
-    /// @param targetPrice The target price asked for.
+    /// @notice Checks the amount and the target price of a new order, or, for a `Ladder` order, the
+    /// amount and the price of one of its tiers: rejects a zero amount (`ZeroAmount`), an amount
+    /// above `maxOrderAmount` (`AmountAboveMax`) and a zero target price (`ZeroTargetPrice`), in
+    /// this order.
+    /// @param usdcAmount The amount asked for, or the amount of the tier.
+    /// @param targetPrice The target price asked for, or the price of the tier.
     function _requireValidAmountAndTarget(
         uint256 usdcAmount,
         uint256 targetPrice
@@ -1098,6 +1247,31 @@ contract LedgerTrigger is ReentrancyGuard {
         }
     }
 
+    /// @notice Checks the tiers of a new `Ladder` order: rejects no tiers (`NoTiers`) and more
+    /// tiers than `maxTiersPerOrder` (`TooManyTiers`); then, tier by tier from tier 0, each tier
+    /// checked in full before the next, a zero amount (`ZeroAmount`), an amount above
+    /// `maxOrderAmount` (`AmountAboveMax`), a zero price (`ZeroTargetPrice`) and, from tier 1
+    /// on, a price not strictly below the tier before (`TiersNotDescending`), in this order.
+    /// @param tiers The tiers asked for.
+    /// @return budget The amounts of the tiers added up.
+    function _requireValidTiers(
+        Tier[] calldata tiers
+    ) private view returns (uint256 budget) {
+        uint256 tierCount = tiers.length;
+        if (tierCount == 0) revert NoTiers();
+        if (tierCount > maxTiersPerOrder) {
+            revert TooManyTiers(tierCount, maxTiersPerOrder);
+        }
+        for (uint256 i = 0; i < tierCount; ++i) {
+            Tier calldata tier = tiers[i];
+            _requireValidAmountAndTarget(tier.usdcAmount, tier.price);
+            if (i > 0 && !(tier.price < tiers[i - 1].price)) {
+                revert TiersNotDescending(i);
+            }
+            budget += tier.usdcAmount;
+        }
+    }
+
     /// @notice Stores a new order of `kind` for the caller, adds it to the caller's open count and
     /// its budget to the caller's open total, and emits `OrderCreated`. The order is `Dormant`
     /// when `activationPrice` is above zero and `Open` otherwise. The inputs must have been
@@ -1108,7 +1282,7 @@ contract LedgerTrigger is ReentrancyGuard {
     /// the order may pay.
     /// @param activationPrice Zero, or the activation price of a dormant order.
     /// @param fillsTotal How many fills the order takes: one for a `Limit` order, its number of
-    /// periods for a `Dca` order.
+    /// periods for a `Dca` order, its number of tiers for a `Ladder` order.
     /// @param recipient Address that receives the ETH.
     /// @param executor Address the owner names for filling the order.
     /// @param expiry Last second at which the order is valid.
@@ -1221,7 +1395,9 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @notice Runs the fill checks on an order in a fixed order and stops at the first that
     /// fails: stored status (`NotOpen` for a finished order, `Dormant` for one not activated),
     /// expiry, for a `Dca` order its period (period 0 begun, current period not bought yet), then,
-    /// with the amount and the price cap of this fill worked out, price (above zero and not
+    /// with the amount and the price cap of this fill worked out (for a `Ladder` order, the
+    /// amount and the price of its next tier, read only once the stored status has passed, so
+    /// that the tier exists), price (above zero and not
     /// updated in the future, then not older than `maxPriceAge`, then not above the price cap),
     /// allowance, balance. Both `canFill` and `fillOrder` use it, so they always agree.
     /// @param orderId The order.
@@ -1232,12 +1408,19 @@ contract LedgerTrigger is ReentrancyGuard {
         Order storage order = orders[orderId];
         check.blocker = _checkStatusAndExpiry(order);
         if (check.blocker != FillBlocker.None) return check;
-        if (order.kind == OrderKind.Dca) {
+        OrderKind kind = order.kind;
+        if (kind == OrderKind.Dca) {
             // A `Dca` order spends the amount of one period, once in each period, at no more than
             // its target price.
             _checkPeriod(schedules[orderId], check);
             if (check.blocker != FillBlocker.None) return check;
             check.priceCap = order.targetPrice;
+        } else if (kind == OrderKind.Ladder) {
+            // A `Ladder` order spends the amount of its next tier, at no more than that tier's
+            // price. The stored status passed above, so the order still has a next tier.
+            Tier storage tier = tiersOf[orderId][order.fillsDone];
+            check.amount = tier.usdcAmount;
+            check.priceCap = tier.price;
         } else {
             // A `Limit` order spends all it has left, at no more than its target price.
             check.amount = order.usdcRemaining;

@@ -2,8 +2,9 @@
 // tests. On top of `deployLedgerTrigger` it stocks the mock swap venue with
 // ETH, gives `owner` and `otherOwner` 1000 USDC each with a matching allowance
 // to LedgerTrigger, and adds helpers to place, fill and inspect orders, to
-// place, activate and inspect dormant ones, and to place time-scheduled (Dca)
-// ones and read their schedules.
+// place, activate and inspect dormant ones, to place time-scheduled (Dca)
+// ones and read their schedules, and to place Ladder ones and read their
+// tiers.
 //
 // This file holds no tests; test files import `setUpFills` from it.
 //
@@ -169,6 +170,21 @@ export type DcaInput = {
 
 /** One day in seconds: the period length of the default Dca input. */
 export const ONE_DAY = 86_400n;
+
+/** One tier of a Ladder order: the fields of the contract's Tier. */
+export type TierInput = {
+  readonly price: bigint;
+  readonly usdcAmount: bigint;
+};
+
+/** The fields of LadderOrderParams, the one input of createLadderOrder. */
+export type LadderInput = {
+  readonly tiers: readonly TierInput[];
+  readonly activationPrice: bigint;
+  readonly recipient: Address;
+  readonly executor: Address;
+  readonly expiry: bigint;
+};
 
 export type SetUpOptions = DeployOptions & {
   /** ETH sent to the mock swap venue after deployment. Default: 100 ETH. */
@@ -533,6 +549,82 @@ export async function setUpFills(options: SetUpOptions = {}) {
     return on.read.getSchedule([orderId]);
   }
 
+  /**
+   * The default Ladder input: three tiers, 100 USDC at 2000 USD, then
+   * 150 USDC at 1900 USD, then 200 USDC at 1800 USD (450 USDC in all, each
+   * amount different, so a skipped or joined tier shows in the amounts), no
+   * activation price, valid for one day.
+   */
+  async function defaultLadderInput(): Promise<LadderInput> {
+    return {
+      tiers: [
+        { price: usd(2_000n), usdcAmount: 100n * ONE_USDC },
+        { price: usd(1_900n), usdcAmount: 150n * ONE_USDC },
+        { price: usd(1_800n), usdcAmount: 200n * ONE_USDC },
+      ],
+      activationPrice: 0n,
+      recipient: recipient.account.address,
+      executor: executor.account.address,
+      expiry: (await now()) + ONE_DAY,
+    };
+  }
+
+  /**
+   * Sends createLadderOrder with `input` as `from` (default: the owner) to
+   * `on` (default: the main LedgerTrigger). Returns the hash promise.
+   */
+  function sendPlaceLadder(
+    input: LadderInput,
+    from: Wallet = owner,
+    on: Trigger = trigger,
+  ): Promise<Hash> {
+    return on.write.createLadderOrder([input], { account: from.account });
+  }
+
+  /**
+   * Places a Ladder order with the default Ladder input changed by
+   * `changes`, as `from`, on `on` (default: the main LedgerTrigger), and
+   * checks that it logged exactly one OrderCreated and one OrderTiered.
+   * Returns its ID, the input, the receipt and the two events.
+   */
+  async function placeLadder(
+    changes: Partial<LadderInput> = {},
+    from: Wallet = owner,
+    on: Trigger = trigger,
+  ) {
+    const input = { ...(await defaultLadderInput()), ...changes };
+    const receipt = await mined(await sendPlaceLadder(input, from, on));
+    const created = parseEventLogs({
+      abi: on.abi,
+      logs: receipt.logs,
+      eventName: "OrderCreated",
+    });
+    const tiered = parseEventLogs({
+      abi: on.abi,
+      logs: receipt.logs,
+      eventName: "OrderTiered",
+    });
+    assert.equal(created.length, 1);
+    assert.equal(tiered.length, 1);
+    const [createdEvent] = created;
+    const [tieredEvent] = tiered;
+    if (createdEvent === undefined || tieredEvent === undefined) {
+      throw new Error("no OrderCreated or OrderTiered event");
+    }
+    return {
+      orderId: createdEvent.args.orderId,
+      input,
+      receipt,
+      created: createdEvent,
+      tiered: tieredEvent,
+    };
+  }
+
+  /** The tiers of a Ladder order, as getTiers returns them. */
+  function tiersOf(orderId: bigint, on: Trigger = trigger) {
+    return on.read.getTiers([orderId]);
+  }
+
   return {
     ...fixture,
     approve,
@@ -556,5 +648,9 @@ export async function setUpFills(options: SetUpOptions = {}) {
     sendPlaceDca,
     placeDca,
     scheduleOf,
+    defaultLadderInput,
+    sendPlaceLadder,
+    placeLadder,
+    tiersOf,
   };
 }
