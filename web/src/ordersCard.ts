@@ -1,11 +1,14 @@
-// "My orders" and the order lookup: one row per order, with Fill now and
-// Cancel buttons. Rows are kept and updated in place, so a refresh never
-// makes them flicker or restarts the pulsing dot.
+// "My orders" and the order lookup: one row per order, with Activate, Fill
+// now and Cancel buttons as its status allows, and for a Dca or Ladder order
+// a button that opens its schedule or tiers. Rows are kept and updated in
+// place, so a refresh never makes them flicker, restarts the pulsing dot or
+// closes the details.
 //
-// Fill now and Cancel simulate the call on the local node first, from the
-// connected account. If the contract would reject it, the error shows in red
-// under the row and the wallet is never asked. Only a call that would pass is
-// sent.
+// Activate, Fill now and Cancel simulate the call on the local node first,
+// from the connected account. If the contract would reject it, the error
+// shows in red under the row and the wallet is never asked. Only a call that
+// would pass is sent. So Fill now on a dormant order, which the contract
+// refuses, shows that refusal.
 
 import { readSnapshot } from "./chain.ts";
 import { TRIGGER_ABI } from "./contracts.ts";
@@ -25,6 +28,7 @@ import {
 } from "./lib/orders.ts";
 import { describeFailure } from "./lib/revert.ts";
 import { isBusy } from "./lib/txState.ts";
+import { detailsElement, detailsLabel } from "./orderDetails.ts";
 import { sendBlocker, type Page } from "./page.ts";
 import {
   clearStep,
@@ -35,28 +39,51 @@ import {
 import { sendCall } from "./wallet.ts";
 
 const FLASH_MS = 800;
-const COLUMNS = 6;
+const COLUMNS = 7;
 
-const Action = { Fill: "fill", Cancel: "cancel" } as const;
+const Action = {
+  Activate: "activate",
+  Fill: "fill",
+  Cancel: "cancel",
+} as const;
 type ActionName = (typeof Action)[keyof typeof Action];
+
+/** The contract function and the button's name, for each action. */
+const ACTION_CALLS: Readonly<
+  Record<ActionName, { readonly functionName: string; readonly label: string }>
+> = {
+  [Action.Activate]: { functionName: "activateOrder", label: "Activate" },
+  [Action.Fill]: { functionName: "fillOrder", label: "Fill now" },
+  [Action.Cancel]: { functionName: "cancelOrder", label: "Cancel" },
+};
 
 type RowParts = {
   readonly orderId: bigint;
   readonly main: HTMLTableRowElement;
   readonly note: HTMLTableRowElement;
+  readonly detailsRow: HTMLTableRowElement;
+  readonly detailsCell: HTMLTableCellElement;
   readonly id: HTMLElement;
+  readonly kind: HTMLElement;
   readonly badge: HTMLElement;
   readonly amount: HTMLElement;
+  readonly remaining: HTMLElement;
   readonly target: HTMLElement;
+  readonly activation: HTMLElement;
+  readonly progress: HTMLElement;
+  readonly toggle: HTMLButtonElement;
   readonly expiry: HTMLElement;
   readonly status: HTMLElement;
   readonly dot: HTMLElement;
   readonly statusText: HTMLElement;
+  readonly activate: HTMLButtonElement;
   readonly fill: HTMLButtonElement;
   readonly cancel: HTMLButtonElement;
   readonly message: HTMLElement;
   readonly step: TxStep;
   busy: boolean;
+  /** True while the schedule or the tiers are open under the row. */
+  open: boolean;
   /** What the row showed when the red message appeared, if one is shown. */
   messageShownAt: RowCondition | undefined;
 };
@@ -89,14 +116,28 @@ function isFinal(snapshot: OrderSnapshot | undefined): boolean {
 function createRow(page: Page, orderId: bigint): RowParts {
   const main = make("tr", "order-row");
   const note = make("tr", "note-row");
+  const detailsRow = make("tr", "details-row");
   const cell = (className = "") => make("td", className);
   const idCell = cell("order-id");
   const id = make("span", "", `#${orderId}`);
+  const kind = make("span", "cell-note");
   const badge = make("span", "badge", "not yours");
-  idCell.append(id, badge);
-  const amount = cell("num");
-  const target = cell("num");
-  const expiry = cell("mono");
+  idCell.append(id, kind, badge);
+  const amountCell = cell("num");
+  const amount = make("span");
+  const remaining = make("span", "cell-note");
+  amountCell.append(amount, remaining);
+  const targetCell = cell("num");
+  const target = make("span");
+  const activation = make("span", "cell-note");
+  targetCell.append(target, activation);
+  const progressCell = cell("progress");
+  const progress = make("span");
+  const toggle = make("button", "details-toggle");
+  toggle.type = "button";
+  toggle.setAttribute("aria-expanded", "false");
+  progressCell.append(progress, toggle);
+  const expiry = cell("mono expiry");
   const statusCell = cell();
   const status = make("span", "status");
   const dot = make("span", "dot");
@@ -106,6 +147,11 @@ function createRow(page: Page, orderId: bigint): RowParts {
   statusCell.append(status);
   const actionsCell = cell();
   const actions = make("div", "row-actions");
+  const activate = make(
+    "button",
+    "button button-secondary button-small",
+    "Activate",
+  );
   const fill = make(
     "button",
     "button button-secondary button-small",
@@ -116,11 +162,20 @@ function createRow(page: Page, orderId: bigint): RowParts {
     "button button-secondary button-small button-danger",
     "Cancel",
   );
+  activate.type = "button";
   fill.type = "button";
   cancel.type = "button";
-  actions.append(fill, cancel);
+  actions.append(activate, fill, cancel);
   actionsCell.append(actions);
-  main.append(idCell, amount, target, expiry, statusCell, actionsCell);
+  main.append(
+    idCell,
+    amountCell,
+    targetCell,
+    progressCell,
+    expiry,
+    statusCell,
+    actionsCell,
+  );
 
   const noteCell = cell();
   noteCell.colSpan = COLUMNS;
@@ -132,28 +187,72 @@ function createRow(page: Page, orderId: bigint): RowParts {
   note.append(noteCell);
   note.hidden = true;
 
+  const detailsCell = cell();
+  detailsCell.colSpan = COLUMNS;
+  detailsRow.append(detailsCell);
+  detailsRow.hidden = true;
+
   const parts: RowParts = {
     orderId,
     main,
     note,
+    detailsRow,
+    detailsCell,
     id,
+    kind,
     badge,
     amount,
+    remaining,
     target,
+    activation,
+    progress,
+    toggle,
     expiry,
     status,
     dot,
     statusText,
+    activate,
     fill,
     cancel,
     message,
     step: createStep(stepLine),
     busy: false,
+    open: false,
     messageShownAt: undefined,
   };
+  activate.addEventListener(
+    "click",
+    () => void act(page, parts, Action.Activate),
+  );
   fill.addEventListener("click", () => void act(page, parts, Action.Fill));
   cancel.addEventListener("click", () => void act(page, parts, Action.Cancel));
+  toggle.addEventListener("click", () => {
+    parts.open = !parts.open;
+    renderDetails(page, parts);
+  });
   return parts;
+}
+
+/** Opens, redraws or closes the schedule or the tiers under a row. */
+function renderDetails(page: Page, parts: RowParts): void {
+  const trigger = page.trigger;
+  const snapshot = snapshots.get(parts.orderId);
+  const label =
+    snapshot === undefined ? undefined : detailsLabel(snapshot.order.kind);
+  setShown(parts.toggle, label !== undefined);
+  setText(parts.toggle, label ?? "");
+  parts.toggle.setAttribute("aria-expanded", String(parts.open));
+  const element =
+    parts.open && label !== undefined && snapshot && trigger
+      ? detailsElement(snapshot, page.latest?.time ?? 0n, trigger.decimals)
+      : undefined;
+  if (element === undefined) {
+    parts.detailsCell.replaceChildren();
+    setShown(parts.detailsRow, false);
+    return;
+  }
+  parts.detailsCell.replaceChildren(element);
+  setShown(parts.detailsRow, true);
 }
 
 function updateNote(parts: RowParts): void {
@@ -182,8 +281,20 @@ function updateRow(page: Page, parts: RowParts, row: OrderRow): void {
     showRowMessage(parts, undefined);
   }
   setShown(parts.badge, !row.mine);
+  setText(parts.kind, row.kind);
   setText(parts.amount, row.amount);
+  const partlySpent = row.remaining !== row.amount;
+  setShown(parts.remaining, partlySpent);
+  setText(parts.remaining, partlySpent ? `${row.remaining} left` : "");
   setText(parts.target, row.targetPrice);
+  setShown(parts.activation, row.activationPrice !== undefined);
+  setText(
+    parts.activation,
+    row.activationPrice === undefined
+      ? ""
+      : `activation ${row.activationPrice}`,
+  );
+  setText(parts.progress, row.progress);
   setText(parts.expiry, formatDateTime(row.expiry));
   const statusClass = `status status-${row.status.tone}`;
   if (parts.status.className !== statusClass) {
@@ -191,16 +302,18 @@ function updateRow(page: Page, parts: RowParts, row: OrderRow): void {
   }
   setShown(parts.dot, row.status.pulse);
   setText(parts.statusText, row.status.text);
+  setShown(parts.activate, row.actions.activate);
   setShown(parts.fill, row.actions.fill);
   setShown(parts.cancel, row.actions.cancel);
   const blocker = sendBlocker(page);
   const busy = parts.busy || isBusy(parts.step.state);
-  for (const button of [parts.fill, parts.cancel]) {
+  for (const button of [parts.activate, parts.fill, parts.cancel]) {
     button.disabled = blocker !== undefined || busy;
     button.title = blocker ?? "";
   }
   if (flashing.has(row.orderId)) flash(parts);
   updateNote(parts);
+  renderDetails(page, parts);
 }
 
 function flash(parts: RowParts): void {
@@ -221,12 +334,13 @@ async function act(
   if (parts.busy || sendBlocker(page) !== undefined) return;
   if (!trigger || !me || !wallet) return;
   parts.busy = true;
+  parts.activate.disabled = true;
   parts.fill.disabled = true;
   parts.cancel.disabled = true;
   showRowMessage(parts, undefined);
   clearStep(parts.step);
   page.requestRefresh();
-  const functionName = action === Action.Fill ? "fillOrder" : "cancelOrder";
+  const { functionName, label } = ACTION_CALLS[action];
   try {
     try {
       await page.reader.simulateContract({
@@ -245,7 +359,6 @@ async function act(
       );
       return;
     }
-    const label = action === Action.Fill ? "Fill now" : "Cancel";
     const done = runTransaction(page, parts.step, label, () =>
       sendCall(wallet, me, {
         address: trigger.address,
@@ -295,8 +408,7 @@ function renderMine(page: Page, created: readonly CreatedOrder[]): void {
   const wanted = new Set(rows.map((row) => row.orderId));
   for (const [id, parts] of myRows) {
     if (!wanted.has(id)) {
-      parts.main.remove();
-      parts.note.remove();
+      removeRow(parts);
       myRows.delete(id);
     }
   }
@@ -312,7 +424,10 @@ function renderMine(page: Page, created: readonly CreatedOrder[]): void {
       previous === null ? body.firstChild : previous.nextSibling;
     if (before !== parts.main) body.insertBefore(parts.main, before);
     if (parts.main.nextSibling !== parts.note) parts.main.after(parts.note);
-    previous = parts.note;
+    if (parts.note.nextSibling !== parts.detailsRow) {
+      parts.note.after(parts.detailsRow);
+    }
+    previous = parts.detailsRow;
   }
   setText(byId("my-orders-empty"), emptyText(page, rows.length));
 }
@@ -397,7 +512,7 @@ async function lookUp(page: Page): Promise<void> {
   head.innerHTML =
     byId("my-orders").parentElement?.querySelector("thead")?.innerHTML ?? "";
   const body = make("tbody");
-  body.append(lookupRow.main, lookupRow.note);
+  body.append(lookupRow.main, lookupRow.note, lookupRow.detailsRow);
   table.append(head, body);
   const wrap = make("div", "table-wrap");
   wrap.append(table);
@@ -415,12 +530,16 @@ export function initOrders(page: Page): void {
   });
 }
 
+/** Takes a row, its note and its details off the page. */
+function removeRow(parts: RowParts): void {
+  parts.main.remove();
+  parts.note.remove();
+  parts.detailsRow.remove();
+}
+
 /** Forgets my rows, after the account changed. */
 export function resetMyOrders(): void {
-  for (const parts of myRows.values()) {
-    parts.main.remove();
-    parts.note.remove();
-  }
+  for (const parts of myRows.values()) removeRow(parts);
   myRows.clear();
 }
 

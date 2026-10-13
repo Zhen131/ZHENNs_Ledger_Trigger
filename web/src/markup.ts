@@ -142,6 +142,7 @@ export const PAGE_MARKUP = `
             <th scope="col">Order</th>
             <th scope="col" class="num">Amount (USDC)</th>
             <th scope="col" class="num">Target (USD)</th>
+            <th scope="col">Fills</th>
             <th scope="col">Expires</th>
             <th scope="col">Status</th>
             <th scope="col" class="actions-col"><span class="sr-only">Actions</span></th>

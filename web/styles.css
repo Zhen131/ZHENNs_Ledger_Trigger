@@ -634,6 +634,11 @@ a {
   white-space: nowrap;
 }
 
+/* An expiry may break between the date and the time when space is short. */
+.table td.expiry {
+  white-space: normal;
+}
+
 .actions-col {
   width: 1%;
 }
@@ -673,9 +678,118 @@ a {
   }
 }
 
-.table tbody tr.note-row td {
+.table tbody tr.note-row td,
+.table tbody tr.details-row td {
   border-top: none;
   padding-top: 0;
+}
+
+/* Small grey words under a cell's value: the kind, what is left, the
+   activation price. */
+.cell-note {
+  display: block;
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.progress {
+  white-space: nowrap;
+}
+
+.details-toggle {
+  display: block;
+  margin-top: 2px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent-strong);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.details-toggle::after {
+  content: " ▸";
+}
+
+.details-toggle[aria-expanded="true"]::after {
+  content: " ▾";
+}
+
+.details-toggle:hover {
+  color: var(--accent-stronger);
+}
+
+.details-toggle:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* A Dca order's schedule and a Ladder order's tiers, under the row. */
+
+.details {
+  padding: 12px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.details-grid dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.details-grid dd {
+  margin: 0;
+}
+
+.details-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tier-list {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  justify-content: start;
+  gap: 4px 24px;
+}
+
+.tier-list .num {
+  text-align: right;
+}
+
+.tier-head {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tier-filled {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.tier-next {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.tier-later,
+.tier-unfilled {
+  color: var(--muted);
 }
 
 .status {
@@ -699,7 +813,8 @@ a {
 }
 
 .status-cancelled,
-.status-unknown {
+.status-unknown,
+.status-dormant {
   color: var(--muted);
 }
 
@@ -780,6 +895,10 @@ a {
 
 .event-OrderCancelled {
   color: var(--muted);
+}
+
+.event-OrderActivated {
+  color: var(--accent-strong);
 }
 
 /* No motion for people who asked for less: no spinning, pulsing, flashing
