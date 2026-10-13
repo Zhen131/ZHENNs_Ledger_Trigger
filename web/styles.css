@@ -393,6 +393,10 @@ a {
   .order-form .field-wide {
     grid-column: span 3;
   }
+
+  .order-form .field-recipient {
+    grid-column: 1 / span 3;
+  }
 }
 
 @media (max-width: 720px) {
@@ -402,6 +406,111 @@ a {
 
   .field-wide {
     grid-column: auto;
+  }
+}
+
+/* The kind of order: four radio buttons that look like a row of pills. */
+
+.kind-picker {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.kind-picker legend {
+  padding: 0;
+  margin-bottom: 6px;
+}
+
+.kind-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.kind-option {
+  position: relative;
+  display: inline-flex;
+}
+
+.kind-option input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.kind-option span {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--ink);
+  font-weight: 600;
+  white-space: nowrap;
+  transition:
+    background-color var(--ease),
+    border-color var(--ease),
+    color var(--ease);
+}
+
+.kind-option input:hover + span {
+  background: var(--surface-muted);
+}
+
+.kind-option input:checked + span {
+  background: var(--accent-soft);
+  border-color: var(--accent-strong);
+  color: var(--accent-strong);
+}
+
+.kind-option input:focus-visible + span {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* The Ladder order's tier rows. */
+
+.tiers {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tier-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tier-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 220px)) auto;
+  align-items: end;
+  gap: 12px 16px;
+}
+
+.order-form .tier-row .field {
+  grid-column: auto;
+}
+
+.tier-row .button {
+  justify-self: start;
+}
+
+.tier-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .tier-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
 

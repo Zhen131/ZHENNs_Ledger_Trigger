@@ -28,7 +28,12 @@ import {
 } from "./lib/session.ts";
 import { PAGE_MARKUP } from "./markup.ts";
 import { refreshMetrics, resetMetrics, resetMyBalances } from "./metrics.ts";
-import { initOrderForm, isPlacing, resetOrderMessage } from "./orderForm.ts";
+import {
+  initOrderForm,
+  isPlacing,
+  resetOrderMessage,
+  updateTierControls,
+} from "./orderForm.ts";
 import {
   initOrders,
   redrawOrders,
@@ -114,6 +119,7 @@ function updateControls(): void {
   const submit = byId<HTMLButtonElement>("order-submit");
   submit.disabled = blocker !== undefined || isPlacing();
   setText(byId("order-hint"), blocker ?? "");
+  updateTierControls(page);
   redrawOrders(page, createdOrders());
 }
 

@@ -7,7 +7,7 @@ export const PAGE_MARKUP = `
   <header class="page-head">
     <p class="eyebrow">Ledger Trigger · local chain demo</p>
     <h1 class="page-title">Ledger Trigger</h1>
-    <p class="page-lede">Limit orders that buy ETH with USDC once the price falls to your target. Everything here runs on a local Hardhat chain.</p>
+    <p class="page-lede">Orders that buy ETH with USDC when the price is right: a limit order, a dormant limit order that wakes at an activation price, a Dca order that buys a little in every period, and a Ladder order that buys tier by tier on the way down. Everything here runs on a local Hardhat chain.</p>
   </header>
 
   <section class="card bar" aria-label="Contract and wallet">
@@ -46,21 +46,65 @@ export const PAGE_MARKUP = `
 
   <section class="card" aria-labelledby="order-title">
     <h2 id="order-title" class="card-title">Place an order</h2>
-    <p class="card-lede">Buys ETH with this USDC once the price is at or below the target. Placing moves no money; the fill does.</p>
+    <p id="order-lede" class="card-lede"></p>
     <form id="order-form" class="order-form" novalidate>
-      <label class="field">
+      <fieldset class="kind-picker">
+        <legend class="field-label">Kind</legend>
+        <div class="kind-options">
+          <label class="kind-option"><input type="radio" name="order-kind" value="limit" checked /><span>Limit</span></label>
+          <label class="kind-option"><input type="radio" name="order-kind" value="dormant-limit" /><span>Dormant limit</span></label>
+          <label class="kind-option"><input type="radio" name="order-kind" value="dca" /><span>Dca</span></label>
+          <label class="kind-option"><input type="radio" name="order-kind" value="ladder" /><span>Ladder</span></label>
+        </div>
+      </fieldset>
+      <label class="field" data-kinds="limit dormant-limit">
         <span class="field-label">Amount (USDC)</span>
         <input id="order-usdc" class="input num" inputmode="decimal" placeholder="100" autocomplete="off" />
       </label>
-      <label class="field">
+      <label class="field" data-kinds="limit dormant-limit">
         <span class="field-label">Target price (USD)</span>
         <input id="order-target" class="input num" inputmode="decimal" placeholder="1500" autocomplete="off" />
       </label>
-      <label class="field">
+      <label class="field" data-kinds="dormant-limit">
+        <span class="field-label">Activation price (USD)</span>
+        <input id="order-activation" class="input num" inputmode="decimal" placeholder="2100" autocomplete="off" />
+      </label>
+      <label class="field" data-kinds="dca">
+        <span class="field-label">USDC per period</span>
+        <input id="dca-usdc" class="input num" inputmode="decimal" placeholder="10" autocomplete="off" />
+      </label>
+      <label class="field" data-kinds="dca">
+        <span class="field-label">Price cap (USD)</span>
+        <input id="dca-cap" class="input num" inputmode="decimal" placeholder="2100" autocomplete="off" />
+      </label>
+      <label class="field" data-kinds="dca">
+        <span class="field-label">Every (days)</span>
+        <input id="dca-days" class="input num" inputmode="numeric" value="1" autocomplete="off" />
+      </label>
+      <label class="field" data-kinds="dca">
+        <span class="field-label">Periods</span>
+        <input id="dca-periods" class="input num" inputmode="numeric" placeholder="3" autocomplete="off" />
+      </label>
+      <label class="field" data-kinds="dca">
+        <span class="field-label">Activation price (USD, optional)</span>
+        <input id="dca-activation" class="input num" inputmode="decimal" autocomplete="off" />
+      </label>
+      <div class="tiers" data-kinds="ladder">
+        <div id="tier-rows" class="tier-rows"></div>
+        <div class="tier-actions">
+          <button id="tier-add" class="button button-secondary button-small" type="button">Add tier</button>
+          <span id="tier-limit" class="hint"></span>
+        </div>
+      </div>
+      <label class="field" data-kinds="ladder">
+        <span class="field-label">Activation price (USD, optional)</span>
+        <input id="ladder-activation" class="input num" inputmode="decimal" autocomplete="off" />
+      </label>
+      <label class="field" data-kinds="limit dormant-limit ladder">
         <span class="field-label">Valid for (minutes)</span>
         <input id="order-minutes" class="input num" inputmode="numeric" value="60" autocomplete="off" />
       </label>
-      <label class="field field-wide">
+      <label class="field field-wide field-recipient">
         <span class="field-label">Recipient</span>
         <input id="order-recipient" class="input mono" placeholder="0x…" autocomplete="off" spellcheck="false" />
         <span class="field-hint">who receives the ETH</span>
