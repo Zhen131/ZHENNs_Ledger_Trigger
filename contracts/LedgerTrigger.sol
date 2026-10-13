@@ -1233,15 +1233,16 @@ contract LedgerTrigger is ReentrancyGuard {
         check.blocker = _checkStatusAndExpiry(order);
         if (check.blocker != FillBlocker.None) return check;
         if (order.kind == OrderKind.Dca) {
-            // A `Dca` order spends the amount of one period, once in each period.
+            // A `Dca` order spends the amount of one period, once in each period, at no more than
+            // its target price.
             _checkPeriod(schedules[orderId], check);
             if (check.blocker != FillBlocker.None) return check;
+            check.priceCap = order.targetPrice;
         } else {
-            // A `Limit` order spends all it has left.
+            // A `Limit` order spends all it has left, at no more than its target price.
             check.amount = order.usdcRemaining;
+            check.priceCap = order.targetPrice;
         }
-        // Either way, this fill pays no more than the order's target price.
-        check.priceCap = order.targetPrice;
         _checkPriceAndFunds(order.owner, check);
     }
 
