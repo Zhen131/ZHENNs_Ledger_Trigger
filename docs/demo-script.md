@@ -16,7 +16,7 @@ A live demonstration of Ledger Trigger, planned for ten minutes, on a local Hard
 | Closing      | S56 Each fill issues a receipt; S57 a receipt cannot be transferred                        | correct; refused   | `ReceiptNotTransferable`                 |
 | Backup plans | S09 Cancel an order that is already filled; S20 Place an order above the limit of one fill | refused            | `OrderNotOpen`; `AmountAboveMax`         |
 
-The scenario IDs are those of [contract-spec.md](contract-spec.md), part 6. Every refusal on the page is the contract's own error: the page simulates each call on the node first and shows the error the contract would reject it with, without asking the wallet. S09 and S20 are in "Backup plans" at the end: with a real wallet the scenes above already fill the ten minutes, so those two are shown from the terminal only if there is time left, or when asked.
+The scenario IDs are those of [contract-spec.md](contract-spec.md), part 6. Every refusal on the page is the contract's own error: the page simulates each call on the node first and shows the error the contract would reject it with, without asking the wallet. S09 and S20 are in "Backup plans" at the end: with a real wallet the scenes above already fill the ten minutes, so those two are shown from the terminal only if there is time left, or when asked. At about 20 seconds of talk per scene, an estimate with a real wallet comes to about 10 minutes 53 seconds; when time is short, the presenter says less.
 
 Use the real page only, the one `npm run web` serves at `http://localhost:5173/`. Do not open `dev.html`: it is a development page with a stand-in wallet, not for a demonstration.
 
