@@ -2,10 +2,10 @@
 // chain: MockUSDC, MockPriceFeed, MockSwapVenue and LedgerTrigger itself.
 //
 // This file holds no tests; test files import `deployLedgerTrigger` from it.
-// Every one of the seven deployment parameters can be replaced by the caller.
+// Every one of the nine deployment parameters can be replaced by the caller.
 // The ones not given take the defaults below: the three mock parts deployed
 // here, a 500 USDC order limit, 5 open orders per owner, a 75-minute price
-// age and 1 % slippage.
+// age, 1 % slippage, 52 periods per order and 5 tiers per order.
 
 import { network } from "hardhat";
 import type { Address, Hash } from "viem";
@@ -13,7 +13,7 @@ import type { Address, Hash } from "viem";
 /** One USDC in its smallest unit (6 decimals). */
 export const ONE_USDC = 1_000_000n;
 
-/** The seven deployment parameters of LedgerTrigger. */
+/** The nine deployment parameters of LedgerTrigger. */
 export type LedgerTriggerParameters = {
   readonly usdc: Address;
   readonly priceFeed: Address;
@@ -22,18 +22,22 @@ export type LedgerTriggerParameters = {
   readonly maxOpenOrdersPerOwner: bigint;
   readonly maxPriceAge: bigint;
   readonly maxSlippageBps: bigint;
+  readonly maxPeriodsPerOrder: bigint;
+  readonly maxTiersPerOrder: bigint;
 };
 
-/** Defaults of the four numeric parameters. */
+/** Defaults of the six numeric parameters. */
 export const DEFAULT_LIMITS = {
   maxOrderAmount: 500n * ONE_USDC,
   maxOpenOrdersPerOwner: 5n,
   maxPriceAge: 75n * 60n,
   maxSlippageBps: 100n,
+  maxPeriodsPerOrder: 52n,
+  maxTiersPerOrder: 5n,
 } as const;
 
 export type DeployOptions = {
-  /** Any of the seven parameters; the others keep their defaults. */
+  /** Any of the nine parameters; the others keep their defaults. */
   readonly parameters?: Partial<LedgerTriggerParameters>;
   /** Decimals of the mock price feed. Default: 8, like Chainlink ETH / USD. */
   readonly feedDecimals?: number;
@@ -104,6 +108,8 @@ export async function deployLedgerTrigger(options: DeployOptions = {}) {
       p.maxOpenOrdersPerOwner,
       p.maxPriceAge,
       p.maxSlippageBps,
+      p.maxPeriodsPerOrder,
+      p.maxTiersPerOrder,
     ]);
   }
 

@@ -35,22 +35,34 @@ export const FILL_GAS = 1_000_000n;
 /** Values of the contract's OrderStatus, in declaration order. */
 export const Status = {
   None: 0,
-  Open: 1,
-  Filled: 2,
-  Cancelled: 3,
-  Expired: 4,
+  Dormant: 1,
+  Open: 2,
+  PartiallyFilled: 3,
+  Filled: 4,
+  Cancelled: 5,
+  Expired: 6,
+} as const;
+
+/** Values of the contract's OrderKind, in declaration order. */
+export const Kind = {
+  Limit: 0,
+  Dca: 1,
+  Ladder: 2,
 } as const;
 
 /** Values of the contract's FillBlocker, in declaration order. */
 export const FillBlocker = {
   None: 0,
   NotOpen: 1,
-  Expired: 2,
-  InvalidPrice: 3,
-  StalePrice: 4,
-  PriceAboveTarget: 5,
-  InsufficientAllowance: 6,
-  InsufficientBalance: 7,
+  Dormant: 2,
+  Expired: 3,
+  NotStarted: 4,
+  PeriodAlreadyFilled: 5,
+  InvalidPrice: 6,
+  StalePrice: 7,
+  PriceAboveTarget: 8,
+  InsufficientAllowance: 9,
+  InsufficientBalance: 10,
 } as const;
 
 /** 10^k with k = 18 + feed decimals - USDC decimals. */

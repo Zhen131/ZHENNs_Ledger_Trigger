@@ -189,6 +189,8 @@ export async function runDemo(input: {
       maxOpenOrders: DEPLOY_DEFAULTS.maxOpenOrders,
       maxPriceAgeSeconds: DEPLOY_DEFAULTS.maxPriceAgeSeconds,
       maxSlippageBps: DEPLOY_DEFAULTS.maxSlippageBps,
+      maxPeriodsPerOrder: DEPLOY_DEFAULTS.maxPeriodsPerOrder,
+      maxTiersPerOrder: DEPLOY_DEFAULTS.maxTiersPerOrder,
       venueFeeBps: DEPLOY_DEFAULTS.venueFeeBps,
     },
     mocks: {

@@ -106,6 +106,8 @@ describe("LedgerTrigger fillOrder: what a fill records (S01)", () => {
         usdcAmount: input.usdcAmount,
         ethReceived: received,
         price: feedPrice,
+        fillNumber: 1n,
+        fillsTotal: 1n,
       });
     });
   }

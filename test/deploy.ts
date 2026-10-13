@@ -37,6 +37,8 @@ describe("deployment settings from the environment", () => {
       maxOpenOrders: 5n,
       maxPriceAgeSeconds: 4_500n,
       maxSlippageBps: 100n,
+      maxPeriodsPerOrder: 52n,
+      maxTiersPerOrder: 5n,
       venueFeeBps: 0n,
     });
     assert.deepEqual(mockSettingsFrom({}), {
@@ -60,6 +62,8 @@ describe("deployment settings from the environment", () => {
         maxOpenOrders: 3n,
         maxPriceAgeSeconds: 3_600n,
         maxSlippageBps: 0n,
+        maxPeriodsPerOrder: 52n,
+        maxTiersPerOrder: 5n,
         venueFeeBps: 30n,
       },
     );
@@ -177,6 +181,8 @@ describe("deployment with mock parts", () => {
       maxOpenOrdersPerOwner: await trigger.read.maxOpenOrdersPerOwner(),
       maxPriceAge: await trigger.read.maxPriceAge(),
       maxSlippageBps: await trigger.read.maxSlippageBps(),
+      maxPeriodsPerOrder: await trigger.read.maxPeriodsPerOrder(),
+      maxTiersPerOrder: await trigger.read.maxTiersPerOrder(),
     });
     assert.equal(report.parameters.maxOrderAmount, 250_500_000n);
     assert.equal(report.parameters.maxPriceAge, 3_600n);

@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { getAddress, parseEventLogs, zeroAddress, type Address } from "viem";
 
 import { ONE_USDC, deployLedgerTrigger, usd } from "./deployLedgerTrigger.ts";
+import { Kind } from "./setUpFills.ts";
 
 const MAX_UINT256 = 2n ** 256n - 1n;
 const ONE_HOUR = 3_600n;
@@ -12,10 +13,12 @@ const ONE_DAY = 86_400n;
 /** Values of the contract's OrderStatus, in declaration order. */
 const Status = {
   None: 0,
-  Open: 1,
-  Filled: 2,
-  Cancelled: 3,
-  Expired: 4,
+  Dormant: 1,
+  Open: 2,
+  PartiallyFilled: 3,
+  Filled: 4,
+  Cancelled: 5,
+  Expired: 6,
 } as const;
 
 /** The five inputs of createOrder. */
@@ -239,6 +242,8 @@ describe("LedgerTrigger createOrder: placing an order moves no money", () => {
       usdcAmount: input.usdcAmount,
       targetPrice: input.targetPrice,
       expiry: input.expiry,
+      kind: Kind.Limit,
+      activationPrice: 0n,
     });
   });
 
@@ -261,6 +266,11 @@ describe("LedgerTrigger createOrder: placing an order moves no money", () => {
       createdAt: block.timestamp,
       expiry: input.expiry,
       status: Status.Open,
+      kind: Kind.Limit,
+      usdcRemaining: 77n * ONE_USDC,
+      activationPrice: 0n,
+      fillsTotal: 1n,
+      fillsDone: 0n,
     });
     assert.equal(await trigger.read.statusOf([orderId]), Status.Open);
   });

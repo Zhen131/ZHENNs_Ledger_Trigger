@@ -125,6 +125,8 @@ describe("LedgerTrigger deployment: accepted parameters", () => {
       maxOpenOrdersPerOwner: 5n,
       maxPriceAge: 4_500n,
       maxSlippageBps: 100n,
+      maxPeriodsPerOrder: 52n,
+      maxTiersPerOrder: 5n,
     });
   });
 

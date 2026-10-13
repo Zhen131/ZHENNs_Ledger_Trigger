@@ -81,6 +81,8 @@ describe("web status words: every OrderStatus and FillBlocker name", () => {
   it("Filled is green, Cancelled grey, Expired amber; None and unknown values are named", () => {
     const expected: Record<string, { text: string; tone: string }> = {
       None: { text: "None", tone: Tone.Unknown },
+      Dormant: { text: "Dormant", tone: Tone.Unknown },
+      PartiallyFilled: { text: "PartiallyFilled", tone: Tone.Unknown },
       Filled: { text: "Filled", tone: Tone.Filled },
       Cancelled: { text: "Cancelled", tone: Tone.Cancelled },
       Expired: { text: "Expired", tone: Tone.Expired },

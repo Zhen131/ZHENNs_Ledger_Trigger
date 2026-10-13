@@ -17,7 +17,7 @@ import {ISwapVenue} from "./interfaces/ISwapVenue.sol";
 /// Placing and cancelling an order move no tokens and no ETH. Once the price feed reports a price
 /// at or below the target, the owner or the executor can fill the order: only then is the USDC
 /// taken from the owner, swapped for ETH at the swap venue and the ETH sent to the recipient.
-/// @dev There is no admin: no pause, no upgrade, no setter and no withdrawal. The seven deployment
+/// @dev There is no admin: no pause, no upgrade, no setter and no withdrawal. The nine deployment
 /// parameters can never change. The status `Expired` is never stored; `statusOf` works it out from
 /// the expiry. A fill keeps none of the USDC and ETH it moves: it passes all of both straight
 /// through. USDC sent straight to this contract cannot be refused, and stays here for good, as
@@ -32,13 +32,28 @@ import {ISwapVenue} from "./interfaces/ISwapVenue.sol";
 contract LedgerTrigger is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    /// @notice What kind of order it is.
+    /// @dev `Limit`: one fill that spends the whole amount, at no more than the target price.
+    /// `Dca`: a set amount bought once per period over a number of periods. `Ladder`: amounts
+    /// bought one tier at a time, at falling prices. Every order this contract places is a
+    /// `Limit` order.
+    enum OrderKind {
+        Limit,
+        Dca,
+        Ladder
+    }
+
     /// @notice Where an order stands.
-    /// @dev `None`: no order has this ID. `Open`: placed and not yet filled or cancelled.
-    /// `Filled` and `Cancelled` are final. `Expired` is never stored: `statusOf` reports it for an
-    /// order stored as `Open` whose expiry has passed.
+    /// @dev `None`: no order has this ID. `Dormant`: placed with an activation price and not yet
+    /// activated; it cannot be filled. `Open`: can be filled. `PartiallyFilled`: has had some of
+    /// its fills, not all of them; it can be filled again. `Filled` and `Cancelled` are final.
+    /// `Expired` is never stored: `statusOf` reports it for an order stored as `Dormant`, `Open`
+    /// or `PartiallyFilled` whose expiry has passed.
     enum OrderStatus {
         None,
+        Dormant,
         Open,
+        PartiallyFilled,
         Filled,
         Cancelled,
         Expired
@@ -46,16 +61,22 @@ contract LedgerTrigger is ReentrancyGuard {
 
     /// @notice Why an order cannot be filled right now, as reported by `canFill`.
     /// @dev `None`: nothing stops it. `NotOpen`: its stored status is `Filled` or `Cancelled`.
-    /// `Expired`: its expiry has passed. `InvalidPrice`: the feed's price is zero or below, or its
-    /// update time is after the current block's time. `StalePrice`: the price is older than
-    /// `maxPriceAge`. `PriceAboveTarget`: the price is above the order's target price.
-    /// `InsufficientAllowance`: the owner's USDC allowance to this contract is below the order
-    /// amount. `InsufficientBalance`: the owner's USDC balance is below the order amount. When
-    /// several apply, the first in this list is reported.
+    /// `Dormant`: it has not been activated. `Expired`: its expiry has passed. `NotStarted`: a
+    /// `Dca` order whose first period has not begun. `PeriodAlreadyFilled`: a `Dca` order whose
+    /// current period has been bought already. `InvalidPrice`: the feed's price is zero or below,
+    /// or its update time is after the current block's time. `StalePrice`: the price is older than
+    /// `maxPriceAge`. `PriceAboveTarget`: the price is above the most this fill may pay, which for
+    /// a `Limit` order is its target price. `InsufficientAllowance`: the owner's USDC allowance to
+    /// this contract is below the amount of this fill. `InsufficientBalance`: the owner's USDC
+    /// balance is below the amount of this fill. When several apply, the first in this list is
+    /// reported.
     enum FillBlocker {
         None,
         NotOpen,
+        Dormant,
         Expired,
+        NotStarted,
+        PeriodAlreadyFilled,
         InvalidPrice,
         StalePrice,
         PriceAboveTarget,
@@ -63,27 +84,53 @@ contract LedgerTrigger is ReentrancyGuard {
         InsufficientBalance
     }
 
+    /// @notice Why a dormant order cannot be activated right now.
+    /// @dev `None`: nothing stops it. `NotDormant`: its stored status is not `Dormant`. `Expired`:
+    /// its expiry has passed. `InvalidPrice`: the feed's price is zero or below, or its update
+    /// time is after the current block's time. `StalePrice`: the price is older than
+    /// `maxPriceAge`. `PriceBelowActivation`: the price is below the order's activation price.
+    /// When several apply, the first in this list is reported.
+    enum ActivationBlocker {
+        None,
+        NotDormant,
+        Expired,
+        InvalidPrice,
+        StalePrice,
+        PriceBelowActivation
+    }
+
     /// @notice One order. Orders are never deleted, and their owner, executor and recipient never
     /// change.
     /// @dev Fields: `owner` placed the order. `executor` is the one address besides the owner that
-    /// the owner names for filling it. `recipient` receives the ETH. `usdcAmount` is the USDC to
-    /// spend, in the token's smallest unit. `targetPrice` is the ETH price in USD with the price
-    /// feed's decimals. `createdAt` is the time of the block that placed the order. `expiry` is the
-    /// last second, in Unix time, at which the order is still valid. `status` is the stored status
-    /// and is never `Expired`.
+    /// the owner names for filling it. `recipient` receives the ETH. `kind` is the kind of order.
+    /// `status` is the stored status and is never `Expired`. `usdcAmount` is the USDC budget of
+    /// the whole order, in the token's smallest unit. `usdcRemaining` is the part of that budget
+    /// not spent yet: `usdcAmount` when the order is placed, less the amount of each fill.
+    /// `targetPrice` is the ETH price in USD, with the price feed's decimals, above which a fill
+    /// is refused. `activationPrice` is zero for an order that is `Open` once placed; otherwise
+    /// the order is placed `Dormant`. `fillsTotal` is how many fills the order takes in all, and
+    /// `fillsDone` how many it has had. `createdAt` is the time of the block that placed the
+    /// order. `expiry` is the last second, in Unix time, at which the order is still valid.
     struct Order {
         address owner;
         address executor;
         address recipient;
+        OrderKind kind;
+        OrderStatus status;
         uint256 usdcAmount;
+        uint256 usdcRemaining;
         uint256 targetPrice;
+        uint256 activationPrice;
+        uint256 fillsTotal;
+        uint256 fillsDone;
         uint256 createdAt;
         uint256 expiry;
-        OrderStatus status;
     }
 
-    /// @notice The open orders of one owner: how many there are and their USDC amounts added up.
-    /// @dev An order counts here while its stored status is `Open`, expired or not.
+    /// @notice The unfinished orders of one owner: how many there are and the USDC they have
+    /// left to spend, added up.
+    /// @dev An order counts here while its stored status is `Dormant`, `Open` or
+    /// `PartiallyFilled`, expired or not; `total` adds up the `usdcRemaining` of those orders.
     struct OpenOrders {
         uint256 count;
         uint256 total;
@@ -91,12 +138,16 @@ contract LedgerTrigger is ReentrancyGuard {
 
     /// @notice What the fill checks found for one order: the first reason it cannot be filled,
     /// and the values read on the way.
-    /// @dev Fields: `blocker` is `None` when the order can be filled. `price` and `updatedAt` are
-    /// the feed's answer and update time. `allowance` and `balance` are the owner's USDC
-    /// allowance to this contract and USDC balance. A value is zero when the checks stopped
-    /// before reading it.
+    /// @dev Fields: `blocker` is `None` when the order can be filled. `amount` is the USDC this
+    /// fill spends and `priceCap` the highest feed price at which it may go ahead; a `Limit`
+    /// order spends all of its `usdcRemaining`, with its `targetPrice` as the cap. `price` and
+    /// `updatedAt` are the feed's answer and update time. `allowance` and `balance` are the
+    /// owner's USDC allowance to this contract and USDC balance. A value is zero when the checks
+    /// stopped before working it out or reading it.
     struct FillCheck {
         FillBlocker blocker;
+        uint256 amount;
+        uint256 priceCap;
         int256 price;
         uint256 updatedAt;
         uint256 allowance;
@@ -123,7 +174,7 @@ contract LedgerTrigger is ReentrancyGuard {
     /// deployment, never changes.
     /// @dev Anyone can read it; reading it never reverts.
     uint256 public immutable maxOrderAmount;
-    /// @notice Largest number of open orders one owner can have at the same time. Set at
+    /// @notice Largest number of unfinished orders one owner can have at the same time. Set at
     /// deployment, never changes.
     /// @dev Anyone can read it; reading it never reverts.
     uint256 public immutable maxOpenOrdersPerOwner;
@@ -135,6 +186,12 @@ contract LedgerTrigger is ReentrancyGuard {
     /// changes.
     /// @dev Anyone can read it; reading it never reverts.
     uint256 public immutable maxSlippageBps;
+    /// @notice Largest number of periods of one `Dca` order. Set at deployment, never changes.
+    /// @dev Anyone can read it; reading it never reverts.
+    uint256 public immutable maxPeriodsPerOrder;
+    /// @notice Largest number of tiers of one `Ladder` order. Set at deployment, never changes.
+    /// @dev Anyone can read it; reading it never reverts.
+    uint256 public immutable maxTiersPerOrder;
     /// @notice Decimals of `usdc`, read from the token at deployment.
     /// @dev Anyone can read it; reading it never reverts.
     uint8 public immutable usdcDecimals;
@@ -144,7 +201,7 @@ contract LedgerTrigger is ReentrancyGuard {
 
     /// @notice Order ID to order. IDs start at 1; ID 0 is never used.
     mapping(uint256 orderId => Order order) private orders;
-    /// @notice Owner to the count and the USDC total of their open orders.
+    /// @notice Owner to the count and the USDC total of their unfinished orders.
     mapping(address owner => OpenOrders open) private openOrdersOf;
     /// @notice ID of the newest order, or 0 before the first one.
     uint256 private lastOrderId;
@@ -154,9 +211,12 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @param owner The account that placed it.
     /// @param executor The address the owner names for filling it.
     /// @param recipient Where the ETH goes.
-    /// @param usdcAmount USDC to spend, in the token's smallest unit.
+    /// @param usdcAmount USDC budget of the whole order, in the token's smallest unit.
     /// @param targetPrice ETH price in USD, with the price feed's decimals.
     /// @param expiry Last second at which the order is valid.
+    /// @param kind The kind of order.
+    /// @param activationPrice Zero for an order placed `Open`; otherwise the order was placed
+    /// `Dormant`.
     event OrderCreated(
         uint256 indexed orderId,
         address indexed owner,
@@ -164,7 +224,9 @@ contract LedgerTrigger is ReentrancyGuard {
         address recipient,
         uint256 usdcAmount,
         uint256 targetPrice,
-        uint256 expiry
+        uint256 expiry,
+        OrderKind kind,
+        uint256 activationPrice
     );
 
     /// @notice An order was cancelled by its owner.
@@ -177,15 +239,17 @@ contract LedgerTrigger is ReentrancyGuard {
         bool indexed afterExpiry
     );
 
-    /// @notice An order was filled: its USDC was swapped for ETH and the ETH sent to its
+    /// @notice An order was filled: USDC of the order was swapped for ETH and the ETH sent to its
     /// recipient.
     /// @param orderId ID of the order.
     /// @param owner The order's owner, whose USDC was spent.
     /// @param filledBy The account that filled it: the owner or the order's executor.
     /// @param recipient Where the ETH went.
-    /// @param usdcAmount USDC spent, in the token's smallest unit.
+    /// @param usdcAmount USDC spent by this fill, in the token's smallest unit.
     /// @param ethReceived ETH, in wei, that the swap brought in and the recipient received.
     /// @param price The price feed's price used for the fill, with the feed's decimals.
+    /// @param fillNumber Which fill of the order this is, counting from 1.
+    /// @param fillsTotal How many fills the order takes in all.
     event OrderFilled(
         uint256 indexed orderId,
         address indexed owner,
@@ -193,7 +257,9 @@ contract LedgerTrigger is ReentrancyGuard {
         address recipient,
         uint256 usdcAmount,
         uint256 ethReceived,
-        uint256 price
+        uint256 price,
+        uint256 fillNumber,
+        uint256 fillsTotal
     );
 
     /// @notice No order has this ID.
@@ -203,7 +269,8 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @param orderId The order.
     /// @param caller The account that tried.
     error NotOrderOwner(uint256 orderId, address caller);
-    /// @notice The order's stored status is not `Open`.
+    /// @notice The order's stored status does not allow this: a fill needs `Open` or
+    /// `PartiallyFilled`, and a cancellation `Dormant`, `Open` or `PartiallyFilled`.
     /// @param orderId The order.
     /// @param status Its stored status.
     error OrderNotOpen(uint256 orderId, OrderStatus status);
@@ -223,17 +290,17 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @param expiry The expiry asked for.
     /// @param currentTime The current block's time.
     error ExpiryNotInFuture(uint256 expiry, uint256 currentTime);
-    /// @notice The caller already has `maxOpenOrdersPerOwner` open orders.
+    /// @notice The caller already has `maxOpenOrdersPerOwner` unfinished orders.
     /// @param owner The caller.
-    /// @param max The largest number of open orders allowed.
+    /// @param max The largest number of unfinished orders allowed.
     error TooManyOpenOrders(address owner, uint256 max);
-    /// @notice Only the order's owner or its executor may fill it.
+    /// @notice Only the order's owner or its executor may do this.
     /// @param orderId The order.
     /// @param caller The account that tried.
     error NotOrderOwnerOrExecutor(uint256 orderId, address caller);
     /// @notice The order's expiry has passed.
     /// @param orderId The order.
-    /// @param expiry Its expiry: the last second at which it could be filled.
+    /// @param expiry Its expiry: the last second at which it was valid.
     error OrderExpired(uint256 orderId, uint256 expiry);
     /// @notice The price feed's price is zero or below, or its update time is after the current
     /// block's time.
@@ -243,20 +310,21 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @param updatedAt When the feed last updated the price.
     /// @param maxPriceAge The oldest price age allowed, in seconds.
     error StalePrice(uint256 updatedAt, uint256 maxPriceAge);
-    /// @notice The price feed's price is above the order's target price.
+    /// @notice The price feed's price is above the most this fill may pay, which for a `Limit`
+    /// order is its target price.
     /// @param price The price the feed reported.
-    /// @param targetPrice The order's target price.
+    /// @param targetPrice The most this fill may pay.
     error PriceAboveTarget(uint256 price, uint256 targetPrice);
-    /// @notice The owner's USDC allowance to this contract is below the order amount.
+    /// @notice The owner's USDC allowance to this contract is below the amount of this fill.
     /// @param allowance The allowance the owner has given.
-    /// @param needed The order amount.
+    /// @param needed The amount of this fill.
     error InsufficientAllowance(uint256 allowance, uint256 needed);
-    /// @notice The owner's USDC balance is below the order amount.
+    /// @notice The owner's USDC balance is below the amount of this fill.
     /// @param balance The owner's balance.
-    /// @param needed The order amount.
+    /// @param needed The amount of this fill.
     error InsufficientBalance(uint256 balance, uint256 needed);
     /// @notice After the swap, this contract's USDC balance is not what it was before the USDC
-    /// was taken from the owner, so the swap venue did not take exactly the order amount.
+    /// was taken from the owner, so the swap venue did not take exactly the amount of the fill.
     /// @param expectedBalance This contract's USDC balance before the fill took any USDC.
     /// @param actualBalance This contract's USDC balance after the swap.
     error SwapUsdcMismatch(uint256 expectedBalance, uint256 actualBalance);
@@ -286,6 +354,10 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @notice Deployment: `maxSlippageBps` is 100 % (10000) or more.
     /// @param maxSlippageBps The rejected value, in basis points.
     error SlippageTooHigh(uint256 maxSlippageBps);
+    /// @notice Deployment: `maxPeriodsPerOrder` is zero.
+    error ZeroMaxPeriodsPerOrder();
+    /// @notice Deployment: `maxTiersPerOrder` is zero.
+    error ZeroMaxTiersPerOrder();
 
     /// @notice Rejects an ID that no order has, with `OrderNotFound`.
     /// @param orderId The order.
@@ -316,29 +388,43 @@ contract LedgerTrigger is ReentrancyGuard {
         _;
     }
 
-    /// @notice Rejects an order whose stored status is not `Open`, with `OrderNotOpen`. An expired
-    /// order is still stored as `Open` and passes.
+    /// @notice Lets through only an order whose stored status is `Open` or `PartiallyFilled`, the
+    /// two a fill accepts; rejects any other with `OrderNotOpen`. An expired order keeps its
+    /// stored status here.
     /// @param orderId The order.
     modifier onlyOpen(uint256 orderId) {
         OrderStatus status = orders[orderId].status;
-        if (status != OrderStatus.Open) revert OrderNotOpen(orderId, status);
+        if (!_isOpen(status)) revert OrderNotOpen(orderId, status);
         _;
     }
 
-    /// @notice Deploys the contract with its seven parameters, none of which can change later.
+    /// @notice Lets through only an order whose stored status is `Dormant`, `Open` or
+    /// `PartiallyFilled`, the three a cancellation accepts; rejects a finished one with
+    /// `OrderNotOpen`. An expired order keeps its stored status here.
+    /// @param orderId The order.
+    modifier onlyUnfinished(uint256 orderId) {
+        OrderStatus status = orders[orderId].status;
+        if (!_isUnfinished(status)) revert OrderNotOpen(orderId, status);
+        _;
+    }
+
+    /// @notice Deploys the contract with its nine parameters, none of which can change later.
     /// @dev Checks, in order: the three addresses are not the zero address (`ZeroUsdc`,
     /// `ZeroPriceFeed`, `ZeroSwapVenue`); `maxOrderAmount_`, `maxOpenOrdersPerOwner_` and
     /// `maxPriceAge_` are above zero (`ZeroMaxOrderAmount`, `ZeroMaxOpenOrdersPerOwner`,
-    /// `ZeroMaxPriceAge`); `maxSlippageBps_` is below 10000 (`SlippageTooHigh`), zero allowed.
-    /// Only then does it read the decimals of the token and of the price feed and store them; it
-    /// also reverts if either of them does not report its decimals.
+    /// `ZeroMaxPriceAge`); `maxSlippageBps_` is below 10000 (`SlippageTooHigh`), zero allowed;
+    /// `maxPeriodsPerOrder_` and `maxTiersPerOrder_` are above zero (`ZeroMaxPeriodsPerOrder`,
+    /// `ZeroMaxTiersPerOrder`). Only then does it read the decimals of the token and of the price
+    /// feed and store them; it also reverts if either of them does not report its decimals.
     /// @param usdc_ The USDC token (an ERC-20 token address).
     /// @param priceFeed_ The price feed for ETH in USD (a Chainlink-style feed address).
     /// @param swapVenue_ The swap venue (an `ISwapVenue` address).
     /// @param maxOrderAmount_ Largest order amount, in the token's smallest unit (uint256).
-    /// @param maxOpenOrdersPerOwner_ Largest number of open orders per owner (uint256).
+    /// @param maxOpenOrdersPerOwner_ Largest number of unfinished orders per owner (uint256).
     /// @param maxPriceAge_ Oldest acceptable price age, in seconds (uint256).
     /// @param maxSlippageBps_ Allowed slippage, in basis points (uint256).
+    /// @param maxPeriodsPerOrder_ Largest number of periods of one `Dca` order (uint256).
+    /// @param maxTiersPerOrder_ Largest number of tiers of one `Ladder` order (uint256).
     constructor(
         IERC20 usdc_,
         IPriceFeed priceFeed_,
@@ -346,7 +432,9 @@ contract LedgerTrigger is ReentrancyGuard {
         uint256 maxOrderAmount_,
         uint256 maxOpenOrdersPerOwner_,
         uint256 maxPriceAge_,
-        uint256 maxSlippageBps_
+        uint256 maxSlippageBps_,
+        uint256 maxPeriodsPerOrder_,
+        uint256 maxTiersPerOrder_
     ) {
         if (address(usdc_) == address(0)) revert ZeroUsdc();
         if (address(priceFeed_) == address(0)) revert ZeroPriceFeed();
@@ -357,6 +445,8 @@ contract LedgerTrigger is ReentrancyGuard {
         if (maxSlippageBps_ > MAX_SLIPPAGE_BPS) {
             revert SlippageTooHigh(maxSlippageBps_);
         }
+        if (maxPeriodsPerOrder_ == 0) revert ZeroMaxPeriodsPerOrder();
+        if (maxTiersPerOrder_ == 0) revert ZeroMaxTiersPerOrder();
 
         usdc = usdc_;
         priceFeed = priceFeed_;
@@ -365,6 +455,8 @@ contract LedgerTrigger is ReentrancyGuard {
         maxOpenOrdersPerOwner = maxOpenOrdersPerOwner_;
         maxPriceAge = maxPriceAge_;
         maxSlippageBps = maxSlippageBps_;
+        maxPeriodsPerOrder = maxPeriodsPerOrder_;
+        maxTiersPerOrder = maxTiersPerOrder_;
         usdcDecimals = IERC20Metadata(address(usdc_)).decimals();
         priceDecimals = priceFeed_.decimals();
     }
@@ -386,8 +478,9 @@ contract LedgerTrigger is ReentrancyGuard {
     /// `usdcAmount` above `maxOrderAmount` (`AmountAboveMax`); a zero `targetPrice`
     /// (`ZeroTargetPrice`); a zero `recipient` (`ZeroRecipient`); a zero `executor`
     /// (`ZeroExecutor`); an `expiry` not after the current block's time (`ExpiryNotInFuture`);
-    /// a caller who already has `maxOpenOrdersPerOwner` open orders, expired ones included
-    /// (`TooManyOpenOrders`). The executor may be the caller. Emits `OrderCreated`.
+    /// a caller who already has `maxOpenOrdersPerOwner` unfinished orders, expired ones included
+    /// (`TooManyOpenOrders`). The executor may be the caller. The order is a `Limit` order with
+    /// no activation price, filled once for its whole amount. Emits `OrderCreated`.
     /// @param usdcAmount USDC to spend, in the token's smallest unit (uint256).
     /// @param targetPrice ETH price in USD with the price feed's decimals (uint256).
     /// @param recipient Address that receives the ETH (address).
@@ -402,77 +495,53 @@ contract LedgerTrigger is ReentrancyGuard {
         address executor,
         uint256 expiry
     ) external returns (uint256 orderId) {
-        if (usdcAmount == 0) revert ZeroAmount();
-        if (usdcAmount > maxOrderAmount) {
-            revert AmountAboveMax(usdcAmount, maxOrderAmount);
-        }
-        if (targetPrice == 0) revert ZeroTargetPrice();
-        if (recipient == address(0)) revert ZeroRecipient();
-        if (executor == address(0)) revert ZeroExecutor();
-        if (!(expiry > block.timestamp)) {
-            revert ExpiryNotInFuture(expiry, block.timestamp);
-        }
-        OpenOrders storage open = openOrdersOf[msg.sender];
-        if (!(open.count < maxOpenOrdersPerOwner)) {
-            revert TooManyOpenOrders(msg.sender, maxOpenOrdersPerOwner);
-        }
-
-        orderId = ++lastOrderId;
-        orders[orderId] = Order({
-            owner: msg.sender,
-            executor: executor,
-            recipient: recipient,
-            usdcAmount: usdcAmount,
-            targetPrice: targetPrice,
-            createdAt: block.timestamp,
-            expiry: expiry,
-            status: OrderStatus.Open
-        });
-        ++open.count;
-        open.total += usdcAmount;
-
-        emit OrderCreated(
-            orderId,
-            msg.sender,
-            executor,
-            recipient,
+        _requireValidAmountAndTarget(usdcAmount, targetPrice);
+        _requireValidPartiesExpiryAndSlot(recipient, executor, expiry);
+        orderId = _placeLimitOrder(
             usdcAmount,
             targetPrice,
+            0,
+            recipient,
+            executor,
             expiry
         );
     }
 
-    /// @notice Fills an open order: takes its USDC from the owner, swaps it for ETH at the swap
-    /// venue and sends all of that ETH to the order's recipient.
+    /// @notice Fills an open order: takes the USDC of this fill from the owner, swaps it for ETH at
+    /// the swap venue and sends all of that ETH to the order's recipient. A `Limit` order is
+    /// filled once, for all of its `usdcRemaining`, at no more than its target price.
     /// @dev Only the order's owner or its executor can call it. It takes no address and no
     /// instruction from the caller: the token, the price feed and the swap venue are fixed at
     /// deployment, and the recipient is fixed in the order. Rejects, in this order: a call made
     /// while a fill is already running (`ReentrancyGuardReentrantCall`); an ID that no order has
     /// (`OrderNotFound`); a caller other than the owner and the executor
     /// (`NotOrderOwnerOrExecutor`); then the checks that `canFill` reports, each with its own
-    /// error: stored status not `Open` (`OrderNotOpen`), expiry passed (`OrderExpired`), price
-    /// zero or below or updated after the current block's time (`InvalidPrice`), price older than
-    /// `maxPriceAge` (`StalePrice`), price above the target price (`PriceAboveTarget`), owner's
-    /// allowance below the order amount (`InsufficientAllowance`), owner's balance below the order
-    /// amount (`InsufficientBalance`). A price exactly `maxPriceAge` old counts as fresh, and a price
-    /// equal to the target price can fill. Then it marks the order `Filled`, takes it off the
-    /// owner's open count and total, takes the order amount from the owner, approves the swap
-    /// venue for that amount and swaps it with a minimum ETH output. It trusts its own balances,
-    /// not the venue's return value: its USDC balance must be back to what it was before the USDC
-    /// was taken (`SwapUsdcMismatch`), and its ETH balance must have gone up by at least the
-    /// minimum (`InsufficientEthOut`). It then sets the venue's allowance back to zero, sends all of
-    /// the ETH that came in to the recipient (`EthTransferFailed`) and emits `OrderFilled`. If the
+    /// error: stored status not `Open` or `PartiallyFilled` (`OrderNotOpen`, which names the
+    /// stored status, `Dormant` for an order not activated yet), expiry passed (`OrderExpired`),
+    /// price zero or below or updated after the current block's time (`InvalidPrice`), price
+    /// older than `maxPriceAge` (`StalePrice`), price above the target price
+    /// (`PriceAboveTarget`), owner's allowance below the amount of this fill
+    /// (`InsufficientAllowance`), owner's balance below the amount of this fill
+    /// (`InsufficientBalance`). A price exactly `maxPriceAge` old counts as fresh, and a price
+    /// equal to the target price can fill. Then it counts the fill, takes its amount off the
+    /// order's `usdcRemaining`, marks the order `Filled`, takes it off the owner's open count and
+    /// total, takes the amount from the owner, approves the swap venue for that amount and swaps
+    /// it with a minimum ETH output. It trusts its own balances, not the venue's return value:
+    /// its USDC balance must be back to what it was before the USDC was taken
+    /// (`SwapUsdcMismatch`), and its ETH balance must have gone up by at least the minimum
+    /// (`InsufficientEthOut`). It then sets the venue's allowance back to zero, sends all of the
+    /// ETH that came in to the recipient (`EthTransferFailed`) and emits `OrderFilled`. If the
     /// price feed, the USDC token or the swap venue reverts on the way, the fill reverts with that
     /// call's own revert data, unchanged even when it is empty. Only the two approvals of the swap
-    /// venue (to the order amount, then back to zero) are handled differently: if one reverts or
+    /// venue (to the amount, then back to zero) are handled differently: if one reverts or
     /// returns false, OpenZeppelin's `forceApprove` tries again, setting the allowance to zero and
     /// then to the wanted amount, and a revert in those two calls is passed on. A USDC transfer that
     /// returns something other than true, such as false, instead of reverting, or an approval that
     /// returns false when tried again, makes the fill revert with `SafeERC20FailedOperation`. Any
     /// rejection undoes the whole call: the order keeps the status it had, and no USDC or ETH
     /// moves. The minimum ETH output, in wei, is the larger of
-    /// `usdcAmount * 10^k / targetPrice` (never pay more than the target price) and
-    /// `usdcAmount * 10^k * (10000 - maxSlippageBps) / (price * 10000)` (never get much less than
+    /// `amount * 10^k / targetPrice` (never pay more than the target price) and
+    /// `amount * 10^k * (10000 - maxSlippageBps) / (price * 10000)` (never get much less than
     /// the feed price gives), each worked out in full and rounded down once, with
     /// k = 18 + price feed decimals - USDC decimals.
     /// @param orderId The order (uint256).
@@ -483,72 +552,81 @@ contract LedgerTrigger is ReentrancyGuard {
         nonReentrant
         orderExists(orderId)
         onlyOrderOwnerOrExecutor(orderId)
+        onlyOpen(orderId)
     {
-        // The modifiers have run, in this order: the reentrancy guard, step 0 (the order
-        // exists) and step 1 (the caller is the owner or the executor).
+        // The modifiers have run, in this order: the reentrancy guard, step 0 (the order exists),
+        // step 1 (the caller is the owner or the executor) and the stored status of step 2.
         Order storage order = orders[orderId];
-        // Steps 2 to 4: status and expiry, price, allowance and balance.
-        uint256 price = _requireFillable(orderId, order);
+        // Steps 2 to 5: status, expiry, this fill's amount and price cap, price, allowance, balance.
+        FillCheck memory check = _requireFillable(orderId, order);
+        uint256 amount = check.amount;
+        uint256 price = uint256(check.price);
 
-        // Step 5: mark the order filled and take it off the owner's open orders.
-        order.status = OrderStatus.Filled;
-        OpenOrders storage open = openOrdersOf[order.owner];
-        --open.count;
-        open.total -= order.usdcAmount;
+        // Step 6: count the fill and take it off the order and the owner's open orders.
+        _recordFill(order, amount);
 
-        // Step 6: take the order amount from the owner.
+        // Step 7: take the amount of this fill from the owner.
         uint256 usdcBefore = usdc.balanceOf(address(this));
-        usdc.safeTransferFrom(order.owner, address(this), order.usdcAmount);
+        usdc.safeTransferFrom(order.owner, address(this), amount);
 
-        // Step 7: swap it for ETH; see `_swapForEth`.
+        // Step 8: swap it for ETH; see `_swapForEth`.
         uint256 ethReceived = _swapForEth(
-            order.usdcAmount,
-            _minEthOut(order.usdcAmount, order.targetPrice, price),
+            amount,
+            _minEthOut(amount, check.priceCap, price),
             usdcBefore
         );
 
-        // Step 8: set the swap venue's allowance back to zero.
+        // Step 9: set the swap venue's allowance back to zero.
         usdc.forceApprove(address(swapVenue), 0);
 
-        // Step 9: send all of the ETH that came in to the recipient.
+        // Step 10: send all of the ETH that came in to the recipient.
         (bool sent, ) = order.recipient.call{value: ethReceived}("");
         if (!sent) revert EthTransferFailed(order.recipient, ethReceived);
 
-        // Step 10: record the fill.
+        // Step 12: record the fill.
         emit OrderFilled(
             orderId,
             order.owner,
             msg.sender,
             order.recipient,
-            order.usdcAmount,
+            amount,
             ethReceived,
-            price
+            price,
+            order.fillsDone,
+            order.fillsTotal
         );
     }
 
-    /// @notice Cancels an open order, expired or not, which frees one of the owner's open-order
-    /// slots. Moves no tokens and no ETH, and calls no other contract: it works whatever the price
-    /// feed or the swap venue does.
+    /// @notice Cancels an unfinished order, expired or not, which frees one of the owner's
+    /// open-order slots and takes the USDC it had left to spend off the owner's open total. Moves
+    /// no tokens and no ETH, and calls no other contract: it works whatever the price feed or the
+    /// swap venue does.
     /// @dev Only the order's owner can call it; the executor cannot. Rejects, in this order: an ID
     /// that no order has (`OrderNotFound`); a caller other than the owner (`NotOrderOwner`); an
-    /// order whose stored status is not `Open`, that is one already filled or cancelled
-    /// (`OrderNotOpen`). Sets the status to `Cancelled`, takes the order off the owner's open
-    /// count and total, and emits `OrderCancelled`.
+    /// order whose stored status is not `Dormant`, `Open` or `PartiallyFilled`, that is one
+    /// already filled or cancelled (`OrderNotOpen`). Sets the status to `Cancelled`, takes the
+    /// order off the owner's open count, takes its `usdcRemaining` off the owner's open total and
+    /// emits `OrderCancelled`. The order's `usdcRemaining` itself is kept as it was.
     /// @param orderId The order (uint256).
     function cancelOrder(
         uint256 orderId
-    ) external orderExists(orderId) onlyOrderOwner(orderId) onlyOpen(orderId) {
+    )
+        external
+        orderExists(orderId)
+        onlyOrderOwner(orderId)
+        onlyUnfinished(orderId)
+    {
         Order storage order = orders[orderId];
         order.status = OrderStatus.Cancelled;
         OpenOrders storage open = openOrdersOf[order.owner];
         --open.count;
-        open.total -= order.usdcAmount;
+        open.total -= order.usdcRemaining;
 
         emit OrderCancelled(orderId, order.owner, _isExpired(order));
     }
 
     /// @notice Returns every field of an order, with its status as stored. An expired order still
-    /// shows `Open` here; `statusOf` gives the status worked out from the expiry.
+    /// shows its stored status here; `statusOf` gives the status worked out from the expiry.
     /// @dev Anyone can call it. Rejects an ID that no order has (`OrderNotFound`), ID 0 included.
     /// @param orderId The order (uint256).
     /// @return order The stored order (an `Order` struct).
@@ -559,19 +637,19 @@ contract LedgerTrigger is ReentrancyGuard {
     }
 
     /// @notice Returns the status of an order as it stands now: `Expired` for an order stored as
-    /// `Open` whose expiry is before the current block's time, otherwise the stored status. At the
-    /// expiry second itself the order is still `Open`.
+    /// `Dormant`, `Open` or `PartiallyFilled` whose expiry is before the current block's time,
+    /// otherwise the stored status. At the expiry second itself the order keeps its stored status.
     /// @dev Anyone can call it. Rejects an ID that no order has (`OrderNotFound`), ID 0 included;
     /// it never returns `None`.
     /// @param orderId The order (uint256).
-    /// @return status `Open`, `Filled`, `Cancelled` or `Expired` (an `OrderStatus`, uint8 in the
-    /// ABI).
+    /// @return status `Dormant`, `Open`, `PartiallyFilled`, `Filled`, `Cancelled` or `Expired`
+    /// (an `OrderStatus`, uint8 in the ABI).
     function statusOf(
         uint256 orderId
     ) external view orderExists(orderId) returns (OrderStatus status) {
         Order storage order = orders[orderId];
         status = order.status;
-        if (status == OrderStatus.Open && _isExpired(order)) {
+        if (_isUnfinished(status) && _isExpired(order)) {
             status = OrderStatus.Expired;
         }
     }
@@ -599,21 +677,127 @@ contract LedgerTrigger is ReentrancyGuard {
         fillable = reason == FillBlocker.None;
     }
 
-    /// @notice Number of orders of `owner` whose stored status is `Open`, expired ones included.
+    /// @notice Number of orders of `owner` whose stored status is `Dormant`, `Open` or
+    /// `PartiallyFilled`, expired ones included.
     /// @dev Anyone can call it; it never reverts. Zero for an address with no orders.
     /// @param owner Any address (address).
-    /// @return The number of open orders (uint256).
+    /// @return The number of unfinished orders (uint256).
     function openOrderCount(address owner) external view returns (uint256) {
         return openOrdersOf[owner].count;
     }
 
-    /// @notice USDC amounts of the orders of `owner` whose stored status is `Open`, expired ones
-    /// included, added up. This is the allowance `owner` needs to give this contract to cover them.
+    /// @notice USDC that the orders of `owner` whose stored status is `Dormant`, `Open` or
+    /// `PartiallyFilled`, expired ones included, have left to spend: their `usdcRemaining` added
+    /// up. This is the allowance `owner` needs to give this contract to cover them.
     /// @dev Anyone can call it; it never reverts. Zero for an address with no orders.
     /// @param owner Any address (address).
     /// @return The total, in the token's smallest unit (uint256).
     function openOrderTotal(address owner) external view returns (uint256) {
         return openOrdersOf[owner].total;
+    }
+
+    /// @notice Checks the amount and the target price of a new order: rejects a zero amount
+    /// (`ZeroAmount`), an amount above `maxOrderAmount` (`AmountAboveMax`) and a zero target price
+    /// (`ZeroTargetPrice`), in this order.
+    /// @param usdcAmount The amount asked for.
+    /// @param targetPrice The target price asked for.
+    function _requireValidAmountAndTarget(
+        uint256 usdcAmount,
+        uint256 targetPrice
+    ) private view {
+        if (usdcAmount == 0) revert ZeroAmount();
+        if (usdcAmount > maxOrderAmount) {
+            revert AmountAboveMax(usdcAmount, maxOrderAmount);
+        }
+        if (targetPrice == 0) revert ZeroTargetPrice();
+    }
+
+    /// @notice Checks the rest of a new order: rejects a zero recipient (`ZeroRecipient`), a zero
+    /// executor (`ZeroExecutor`), an expiry not after the current block's time
+    /// (`ExpiryNotInFuture`) and a caller who already has `maxOpenOrdersPerOwner` unfinished
+    /// orders (`TooManyOpenOrders`), in this order.
+    /// @param recipient The recipient asked for.
+    /// @param executor The executor asked for.
+    /// @param expiry The expiry asked for.
+    function _requireValidPartiesExpiryAndSlot(
+        address recipient,
+        address executor,
+        uint256 expiry
+    ) private view {
+        if (recipient == address(0)) revert ZeroRecipient();
+        if (executor == address(0)) revert ZeroExecutor();
+        if (!(expiry > block.timestamp)) {
+            revert ExpiryNotInFuture(expiry, block.timestamp);
+        }
+        if (!(openOrdersOf[msg.sender].count < maxOpenOrdersPerOwner)) {
+            revert TooManyOpenOrders(msg.sender, maxOpenOrdersPerOwner);
+        }
+    }
+
+    /// @notice Stores a new `Limit` order for the caller, filled once for its whole amount, adds
+    /// it to the caller's open count and total, and emits `OrderCreated`. The order is `Dormant`
+    /// when `activationPrice` is above zero and `Open` otherwise. The inputs must have been
+    /// checked already.
+    /// @param usdcAmount USDC to spend, in the token's smallest unit.
+    /// @param targetPrice ETH price in USD with the price feed's decimals.
+    /// @param activationPrice Zero, or the activation price of a dormant order.
+    /// @param recipient Address that receives the ETH.
+    /// @param executor Address the owner names for filling the order.
+    /// @param expiry Last second at which the order is valid.
+    /// @return orderId ID of the new order.
+    function _placeLimitOrder(
+        uint256 usdcAmount,
+        uint256 targetPrice,
+        uint256 activationPrice,
+        address recipient,
+        address executor,
+        uint256 expiry
+    ) private returns (uint256 orderId) {
+        orderId = ++lastOrderId;
+        Order storage order = orders[orderId];
+        order.owner = msg.sender;
+        order.executor = executor;
+        order.recipient = recipient;
+        order.kind = OrderKind.Limit;
+        order.status =
+            activationPrice == 0 ? OrderStatus.Open : OrderStatus.Dormant;
+        order.usdcAmount = usdcAmount;
+        order.usdcRemaining = usdcAmount;
+        order.targetPrice = targetPrice;
+        order.activationPrice = activationPrice;
+        order.fillsTotal = 1;
+        // `fillsDone` starts at zero.
+        order.createdAt = block.timestamp;
+        order.expiry = expiry;
+        OpenOrders storage open = openOrdersOf[msg.sender];
+        ++open.count;
+        open.total += usdcAmount;
+
+        emit OrderCreated(
+            orderId,
+            msg.sender,
+            executor,
+            recipient,
+            usdcAmount,
+            targetPrice,
+            expiry,
+            OrderKind.Limit,
+            activationPrice
+        );
+    }
+
+    /// @notice Step 6 of a fill: counts the fill, takes its amount off what the order has left to
+    /// spend, marks the order `Filled`, and takes it off the owner's open count and its amount off
+    /// the owner's open total.
+    /// @param order The order.
+    /// @param amount The USDC this fill spends.
+    function _recordFill(Order storage order, uint256 amount) private {
+        ++order.fillsDone;
+        order.usdcRemaining -= amount;
+        order.status = OrderStatus.Filled;
+        OpenOrders storage open = openOrdersOf[order.owner];
+        --open.count;
+        open.total -= amount;
     }
 
     /// @notice True when the current block's time is after the order's expiry.
@@ -623,23 +807,47 @@ contract LedgerTrigger is ReentrancyGuard {
         return block.timestamp > order.expiry;
     }
 
+    /// @notice True for the stored statuses a fill accepts: `Open` and `PartiallyFilled`.
+    /// @param status A stored status.
+    /// @return Whether an order with this stored status can be filled.
+    function _isOpen(OrderStatus status) private pure returns (bool) {
+        return
+            status == OrderStatus.Open || status == OrderStatus.PartiallyFilled;
+    }
+
+    /// @notice True for the stored statuses of an order that is not finished: `Dormant`, `Open`
+    /// and `PartiallyFilled`. Such an order takes a slot and counts in its owner's open total.
+    /// @param status A stored status.
+    /// @return Whether an order with this stored status is unfinished.
+    function _isUnfinished(OrderStatus status) private pure returns (bool) {
+        return status == OrderStatus.Dormant || _isOpen(status);
+    }
+
     /// @notice Runs the fill checks on an order in a fixed order and stops at the first that
-    /// fails: stored status, expiry, price (above zero and not updated in the future, then not
-    /// older than `maxPriceAge`, then not above the target price), allowance, balance. Both
-    /// `canFill` and `fillOrder` use it, so they always agree.
+    /// fails: stored status (`NotOpen` for a finished order, `Dormant` for one not activated),
+    /// expiry, then, with the amount and the price cap of this fill worked out, price (above zero
+    /// and not updated in the future, then not older than `maxPriceAge`, then not above the price
+    /// cap), allowance, balance. Both `canFill` and `fillOrder` use it, so they always agree.
     /// @param order The order.
     /// @return check The first reason found, or `None`, and the values read on the way.
     function _checkFill(
         Order storage order
     ) private view returns (FillCheck memory check) {
-        if (order.status != OrderStatus.Open) {
-            check.blocker = FillBlocker.NotOpen;
+        OrderStatus status = order.status;
+        if (!_isOpen(status)) {
+            check.blocker =
+                status == OrderStatus.Dormant
+                    ? FillBlocker.Dormant
+                    : FillBlocker.NotOpen;
             return check;
         }
         if (_isExpired(order)) {
             check.blocker = FillBlocker.Expired;
             return check;
         }
+        // A `Limit` order spends all it has left, at no more than its target price.
+        check.amount = order.usdcRemaining;
+        check.priceCap = order.targetPrice;
         (, int256 price, , uint256 updatedAt, ) = priceFeed.latestRoundData();
         check.price = price;
         check.updatedAt = updatedAt;
@@ -651,33 +859,33 @@ contract LedgerTrigger is ReentrancyGuard {
             check.blocker = FillBlocker.StalePrice;
             return check;
         }
-        if (uint256(price) > order.targetPrice) {
+        if (uint256(price) > check.priceCap) {
             check.blocker = FillBlocker.PriceAboveTarget;
             return check;
         }
         check.allowance = usdc.allowance(order.owner, address(this));
-        if (check.allowance < order.usdcAmount) {
+        if (check.allowance < check.amount) {
             check.blocker = FillBlocker.InsufficientAllowance;
             return check;
         }
         check.balance = usdc.balanceOf(order.owner);
-        if (check.balance < order.usdcAmount) {
+        if (check.balance < check.amount) {
             check.blocker = FillBlocker.InsufficientBalance;
         }
     }
 
     /// @notice Runs the fill checks and reverts with the error that matches the first reason
-    /// found.
+    /// found. A finished order and a dormant one both get `OrderNotOpen` with the stored status.
     /// @param orderId The order's ID, for the errors.
     /// @param order The order.
-    /// @return price The feed's price, when every check passes.
+    /// @return check What the checks found, when every check passes.
     function _requireFillable(
         uint256 orderId,
         Order storage order
-    ) private view returns (uint256 price) {
-        FillCheck memory check = _checkFill(order);
+    ) private view returns (FillCheck memory check) {
+        check = _checkFill(order);
         FillBlocker blocker = check.blocker;
-        if (blocker == FillBlocker.NotOpen) {
+        if (blocker == FillBlocker.NotOpen || blocker == FillBlocker.Dormant) {
             revert OrderNotOpen(orderId, order.status);
         }
         if (blocker == FillBlocker.Expired) {
@@ -689,27 +897,26 @@ contract LedgerTrigger is ReentrancyGuard {
         if (blocker == FillBlocker.StalePrice) {
             revert StalePrice(check.updatedAt, maxPriceAge);
         }
-        price = uint256(check.price);
         if (blocker == FillBlocker.PriceAboveTarget) {
-            revert PriceAboveTarget(price, order.targetPrice);
+            revert PriceAboveTarget(uint256(check.price), check.priceCap);
         }
         if (blocker == FillBlocker.InsufficientAllowance) {
-            revert InsufficientAllowance(check.allowance, order.usdcAmount);
+            revert InsufficientAllowance(check.allowance, check.amount);
         }
         if (blocker == FillBlocker.InsufficientBalance) {
-            revert InsufficientBalance(check.balance, order.usdcAmount);
+            revert InsufficientBalance(check.balance, check.amount);
         }
     }
 
-    /// @notice Step 7 of a fill: approves the swap venue for `amount` USDC, swaps it for ETH with
+    /// @notice Step 8 of a fill: approves the swap venue for `amount` USDC, swaps it for ETH with
     /// `minEthOut` as the minimum, and checks the outcome by this contract's own balances rather
     /// than by the venue's return value.
     /// @dev Reverts with `SwapUsdcMismatch` unless the USDC balance is back to `usdcBefore`, that
     /// is the venue took exactly `amount`; then with `InsufficientEthOut` if the ETH balance went
     /// up by less than `minEthOut`.
-    /// @param amount The order amount, in the token's smallest unit.
+    /// @param amount The amount of the fill, in the token's smallest unit.
     /// @param minEthOut The smallest ETH output accepted, in wei.
-    /// @param usdcBefore This contract's USDC balance before the order amount was taken.
+    /// @param usdcBefore This contract's USDC balance before the amount was taken.
     /// @return ethReceived How much this contract's ETH balance went up during the swap, in wei.
     function _swapForEth(
         uint256 amount,
@@ -733,8 +940,8 @@ contract LedgerTrigger is ReentrancyGuard {
     /// `usdcAmount * 10^k / targetPrice` and
     /// `usdcAmount * 10^k * (10000 - maxSlippageBps) / (price * 10000)`, each rounded down once,
     /// with k = 18 + price feed decimals - USDC decimals.
-    /// @param usdcAmount The order amount, in the token's smallest unit.
-    /// @param targetPrice The order's target price, with the feed's decimals.
+    /// @param usdcAmount The amount of the fill, in the token's smallest unit.
+    /// @param targetPrice The most the fill may pay, with the feed's decimals.
     /// @param price The feed's price, with the feed's decimals.
     /// @return The minimum ETH output, in wei.
     function _minEthOut(

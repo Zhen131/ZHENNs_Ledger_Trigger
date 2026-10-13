@@ -75,6 +75,8 @@ export async function setUpScripts(
       5n,
       4_500n,
       100n,
+      52n,
+      5n,
     ]);
     await publicClient.waitForTransactionReceipt({
       hash: await owner.sendTransaction({

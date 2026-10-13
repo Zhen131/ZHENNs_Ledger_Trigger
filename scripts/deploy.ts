@@ -12,7 +12,7 @@
 //   fund-venue script does that, right before it is needed.
 //
 // Both modes pass the send gate first. Afterwards they read LedgerTrigger's
-// seven parameters back from the chain and report them, together with every
+// nine parameters back from the chain and report them, together with every
 // address and the block LedgerTrigger was deployed in (the keeper's first
 // block to read).
 //
@@ -52,6 +52,10 @@ export type DeploySettings = {
   readonly maxPriceAgeSeconds: bigint;
   /** Allowed slippage, in basis points (100 is 1 %). */
   readonly maxSlippageBps: bigint;
+  /** Largest number of periods of one time-scheduled order. */
+  readonly maxPeriodsPerOrder: bigint;
+  /** Largest number of tiers of one tiered order. */
+  readonly maxTiersPerOrder: bigint;
   /** Fee of the swap venue, in basis points. */
   readonly venueFeeBps: bigint;
 };
@@ -72,6 +76,8 @@ export const DEPLOY_DEFAULTS = {
   maxOpenOrders: 5n,
   maxPriceAgeSeconds: 4_500n,
   maxSlippageBps: 100n,
+  maxPeriodsPerOrder: 52n,
+  maxTiersPerOrder: 5n,
   venueFeeBps: 0n,
   mockPriceUsd: "2000",
   mockVenueEth: "10",
@@ -104,6 +110,16 @@ export function deploySettingsFrom(env: Environment): DeploySettings {
       VARIABLES.maxSlippageBps,
       DEPLOY_DEFAULTS.maxSlippageBps,
       0n,
+    ),
+    maxPeriodsPerOrder: whole(
+      VARIABLES.maxPeriodsPerOrder,
+      DEPLOY_DEFAULTS.maxPeriodsPerOrder,
+      1n,
+    ),
+    maxTiersPerOrder: whole(
+      VARIABLES.maxTiersPerOrder,
+      DEPLOY_DEFAULTS.maxTiersPerOrder,
+      1n,
     ),
     venueFeeBps: whole(VARIABLES.venueFeeBps, DEPLOY_DEFAULTS.venueFeeBps, 0n),
   };
@@ -140,7 +156,7 @@ export type PartsCheck = {
   readonly updatedAt: bigint;
 };
 
-/** The seven LedgerTrigger parameters, as read back from the chain. */
+/** The nine LedgerTrigger parameters, as read back from the chain. */
 export type TriggerParameters = {
   readonly usdc: Address;
   readonly priceFeed: Address;
@@ -149,6 +165,8 @@ export type TriggerParameters = {
   readonly maxOpenOrdersPerOwner: bigint;
   readonly maxPriceAge: bigint;
   readonly maxSlippageBps: bigint;
+  readonly maxPeriodsPerOrder: bigint;
+  readonly maxTiersPerOrder: bigint;
 };
 
 export type DeploymentReport = {
@@ -260,6 +278,8 @@ async function deployVenueAndTrigger(
         settings.maxOpenOrders,
         settings.maxPriceAgeSeconds,
         settings.maxSlippageBps,
+        settings.maxPeriodsPerOrder,
+        settings.maxTiersPerOrder,
       ],
       { client },
     );
@@ -277,6 +297,8 @@ async function deployVenueAndTrigger(
     maxOpenOrdersPerOwner: await trigger.read.maxOpenOrdersPerOwner(),
     maxPriceAge: await trigger.read.maxPriceAge(),
     maxSlippageBps: await trigger.read.maxSlippageBps(),
+    maxPeriodsPerOrder: await trigger.read.maxPeriodsPerOrder(),
+    maxTiersPerOrder: await trigger.read.maxTiersPerOrder(),
   };
   const requested: TriggerParameters = {
     usdc,
@@ -286,6 +308,8 @@ async function deployVenueAndTrigger(
     maxOpenOrdersPerOwner: settings.maxOpenOrders,
     maxPriceAge: settings.maxPriceAgeSeconds,
     maxSlippageBps: settings.maxSlippageBps,
+    maxPeriodsPerOrder: settings.maxPeriodsPerOrder,
+    maxTiersPerOrder: settings.maxTiersPerOrder,
   };
   for (const key of Object.keys(requested) as (keyof TriggerParameters)[]) {
     const asked = requested[key];
@@ -499,6 +523,8 @@ export function formatDeployment(report: DeploymentReport): string[] {
     `  maxOpenOrdersPerOwner   ${p.maxOpenOrdersPerOwner} (orders)`,
     `  maxPriceAge             ${p.maxPriceAge} (seconds; ${formatDecimal((p.maxPriceAge * 100n) / 60n, 2)} minutes)`,
     `  maxSlippageBps          ${p.maxSlippageBps} (basis points; ${percent(p.maxSlippageBps)})`,
+    `  maxPeriodsPerOrder      ${p.maxPeriodsPerOrder} (periods per time-scheduled order)`,
+    `  maxTiersPerOrder        ${p.maxTiersPerOrder} (tiers per tiered order)`,
     `Price feed: ${report.feedDecimals} decimals, latest price ${formatDecimal(report.latestPrice, report.feedDecimals)} USD.`,
     `The deploying account holds ${formatDecimal(report.deployerUsdc, report.usdcDecimals)} USDC.`,
     `LedgerTrigger was deployed in block ${report.triggerBlock}: use it as KEEPER_FROM_BLOCK.`,

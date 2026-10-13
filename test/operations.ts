@@ -20,6 +20,7 @@ import {
   describeFailure,
   revertName,
 } from "../scripts/scriptError.ts";
+import { OrderStatus } from "../keeper/names.ts";
 import { VARIABLES } from "../scripts/settings.ts";
 import {
   formatPriceSet,
@@ -80,7 +81,7 @@ describe("place-order", () => {
     assert.equal(order.usdcAmount, 12_500_000n);
     assert.equal(order.targetPrice, 199_999_000_000n);
     assert.equal(order.expiry, latest.timestamp + 30n * 60n);
-    assert.equal(order.status, 1);
+    assert.equal(order.status, OrderStatus.Open);
     assert.equal(placed.orderId, 1n);
   });
 
@@ -191,7 +192,10 @@ describe("cancel-order", () => {
       statusBefore: "Open",
       statusAfter: "Cancelled",
     });
-    assert.equal(await s.trigger.read.statusOf([orderId]), 3);
+    assert.equal(
+      await s.trigger.read.statusOf([orderId]),
+      OrderStatus.Cancelled,
+    );
   });
 
   it("reports the contract's error by name when the order is already cancelled", async () => {

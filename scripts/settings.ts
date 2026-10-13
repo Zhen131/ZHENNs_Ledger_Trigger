@@ -24,6 +24,8 @@ export const VARIABLES = {
   maxOpenOrders: "TRIGGER_MAX_OPEN_ORDERS",
   maxPriceAgeSeconds: "TRIGGER_MAX_PRICE_AGE_SECONDS",
   maxSlippageBps: "TRIGGER_MAX_SLIPPAGE_BPS",
+  maxPeriodsPerOrder: "TRIGGER_MAX_PERIODS_PER_ORDER",
+  maxTiersPerOrder: "TRIGGER_MAX_TIERS_PER_ORDER",
   venueFeeBps: "TRIGGER_VENUE_FEE_BPS",
   // Deployment, mock-parts mode: the mock feed's first price, the ETH stocked
   // in the mock swap venue and the mock USDC minted to the deploying account.
