@@ -1,6 +1,7 @@
 // Builds the rows of the "My orders" table and of the order lookup from what
 // the chain reports: the `OrderCreated` events, and for each order
-// `getOrder`, `statusOf` and `canFill`.
+// `getOrder`, `statusOf` and `canFill`, plus `canActivate` for a dormant
+// order, `getSchedule` for a Dca order and `getTiers` for a Ladder order.
 //
 // The contract keeps no list of orders per owner, so the page reads every
 // `OrderCreated` event and keeps the ones whose owner is the connected
@@ -8,10 +9,13 @@
 
 import type { Address } from "viem";
 
+import { OrderStatus } from "../../../keeper/names.ts";
 import { formatAmount } from "./amounts.ts";
+import { orderKindName } from "./kinds.ts";
 import {
   actionsFor,
   statusView,
+  type ActivationCheck,
   type FillCheck,
   type OrderActions,
   type StatusView,
@@ -28,10 +32,38 @@ export type StoredOrder = {
   readonly owner: Address;
   readonly executor: Address;
   readonly recipient: Address;
+  /** An OrderKind value. */
+  readonly kind: number;
+  /** The whole budget: the amount, every period's or every tier's added up. */
   readonly usdcAmount: bigint;
+  /** The part of the budget not spent yet. */
+  readonly usdcRemaining: bigint;
+  /** Limit: the target; Dca: the cap of each period; Ladder: tier 0's price. */
   readonly targetPrice: bigint;
+  /** 0 when the order was placed awake. */
+  readonly activationPrice: bigint;
+  /** Limit 1; Dca the number of periods; Ladder the number of tiers. */
+  readonly fillsTotal: bigint;
+  readonly fillsDone: bigint;
   readonly createdAt: bigint;
   readonly expiry: bigint;
+};
+
+/** A Dca order's schedule, as `getSchedule` returns it. */
+export type ScheduleData = {
+  /** Period 0 starts at this second (Unix time). */
+  readonly startAt: bigint;
+  /** Seconds in one period. */
+  readonly periodLength: bigint;
+  readonly usdcPerPeriod: bigint;
+  /** The earliest period, counted from 0, that may still be bought. */
+  readonly filledThrough: bigint;
+};
+
+/** One tier of a Ladder order, as `getTiers` returns it. */
+export type TierData = {
+  readonly price: bigint;
+  readonly usdcAmount: bigint;
 };
 
 /** What the chain said about one order. */
@@ -42,6 +74,12 @@ export type OrderSnapshot = {
   readonly status: number;
   /** `canFill`. */
   readonly check: FillCheck;
+  /** `canActivate`: read only when `statusOf` is Dormant. */
+  readonly activation?: ActivationCheck;
+  /** `getSchedule`: read only for a Dca order. */
+  readonly schedule?: ScheduleData;
+  /** `getTiers`: read only for a Ladder order. */
+  readonly tiers?: readonly TierData[];
 };
 
 export type Decimals = {
@@ -55,16 +93,31 @@ export type OrderRow = {
   readonly owner: Address;
   /** True when the connected account placed the order. */
   readonly mine: boolean;
-  /** USDC amount, for example "100.00". */
+  /** The OrderKind value. */
+  readonly kindValue: number;
+  /** The kind's name: "Limit", "Dca" or "Ladder". */
+  readonly kind: string;
+  /** The whole budget in USDC, for example "100.00". */
   readonly amount: string;
+  /** The part of the budget not spent yet, in USDC. */
+  readonly remaining: string;
   /** Target price in USD, for example "1500.00". */
   readonly targetPrice: string;
+  /** The activation price in USD, or undefined when the order has none. */
+  readonly activationPrice: string | undefined;
+  /** "fills <done> of <total>". */
+  readonly progress: string;
   /** Last second, in Unix time, at which the order is valid. */
   readonly expiry: bigint;
   /** `statusOf`: an OrderStatus value. */
   readonly statusValue: number;
   /** The reason `canFill` gave: a FillBlocker value. */
   readonly reasonValue: number;
+  /**
+   * The reason `canActivate` gave, an ActivationBlocker value: only for a
+   * dormant order whose activation check was read.
+   */
+  readonly activationValue: number | undefined;
   readonly status: StatusView;
   readonly actions: OrderActions;
 };
@@ -95,16 +148,28 @@ export function orderRow(
   me: string | undefined,
   decimals: Decimals,
 ): OrderRow {
+  const order = snapshot.order;
+  const activation =
+    snapshot.status === OrderStatus.Dormant ? snapshot.activation : undefined;
   return {
     orderId: snapshot.orderId,
-    owner: snapshot.order.owner,
-    mine: isMine(snapshot.order.owner, me),
-    amount: formatAmount(snapshot.order.usdcAmount, decimals.usdc),
-    targetPrice: formatAmount(snapshot.order.targetPrice, decimals.price),
-    expiry: snapshot.order.expiry,
+    owner: order.owner,
+    mine: isMine(order.owner, me),
+    kindValue: order.kind,
+    kind: orderKindName(order.kind),
+    amount: formatAmount(order.usdcAmount, decimals.usdc),
+    remaining: formatAmount(order.usdcRemaining, decimals.usdc),
+    targetPrice: formatAmount(order.targetPrice, decimals.price),
+    activationPrice:
+      order.activationPrice > 0n
+        ? formatAmount(order.activationPrice, decimals.price)
+        : undefined,
+    progress: `fills ${order.fillsDone} of ${order.fillsTotal}`,
+    expiry: order.expiry,
     statusValue: snapshot.status,
     reasonValue: snapshot.check.reason,
-    status: statusView(snapshot.status, snapshot.check),
+    activationValue: activation?.reason,
+    status: statusView(snapshot.status, snapshot.check, activation),
     actions: actionsFor(snapshot.status),
   };
 }
@@ -142,17 +207,32 @@ export function approvalFor(
   return { needed: allowance < target, allowance: target };
 }
 
-/** What a row shows about an order: its status and the reason from `canFill`. */
+/**
+ * What a row shows about an order: its status and the reason from `canFill`,
+ * and for a dormant order the reason from `canActivate`.
+ */
 export type RowCondition = {
   /** `statusOf`: an OrderStatus value. */
   readonly status: number;
   /** `canFill`'s reason: a FillBlocker value. */
   readonly reason: number;
+  /** `canActivate`'s reason, an ActivationBlocker value: dormant orders only. */
+  readonly activation?: number;
 };
 
-/** The status and the reason a row shows. */
+/**
+ * The status and the reasons a row shows: `{ status, reason }`, and for a
+ * dormant order whose activation check was read `{ status, reason,
+ * activation }`.
+ */
 export function rowCondition(row: OrderRow): RowCondition {
-  return { status: row.statusValue, reason: row.reasonValue };
+  return row.activationValue === undefined
+    ? { status: row.statusValue, reason: row.reasonValue }
+    : {
+        status: row.statusValue,
+        reason: row.reasonValue,
+        activation: row.activationValue,
+      };
 }
 
 /**
@@ -160,9 +240,10 @@ export function rowCondition(row: OrderRow): RowCondition {
  * says why the contract refused a call while the row showed `shownAt`
  * (undefined when no message is shown). Once the row shows something else,
  * `now`, the message no longer fits it, so it goes: when the status changed,
- * such as Filled after Open, and also when only the reason changed, such as
- * "can be filled now" after "waiting: PriceAboveTarget". It stays only while
- * both are the same.
+ * such as Filled after Open, and also when only a reason changed, such as
+ * "can be filled now" after "waiting: PriceAboveTarget", or for a dormant
+ * order "can be activated now" after "waiting: PriceBelowActivation". It
+ * stays only while the status and the reasons are all the same.
  */
 export function clearsRowMessage(
   shownAt: RowCondition | undefined,
@@ -170,6 +251,8 @@ export function clearsRowMessage(
 ): boolean {
   return (
     shownAt !== undefined &&
-    (shownAt.status !== now.status || shownAt.reason !== now.reason)
+    (shownAt.status !== now.status ||
+      shownAt.reason !== now.reason ||
+      shownAt.activation !== now.activation)
   );
 }

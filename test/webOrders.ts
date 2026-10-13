@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { FillBlocker, OrderStatus } from "../keeper/names.ts";
+import { OrderKind } from "../web/src/lib/kinds.ts";
 import {
   approvalFor,
   clearsRowMessage,
@@ -48,8 +49,13 @@ function snapshot(
       owner,
       executor: EXECUTOR,
       recipient: RECIPIENT,
+      kind: OrderKind.Limit,
       usdcAmount: 100_000_000n,
+      usdcRemaining: 100_000_000n,
       targetPrice: 150_000_000_000n,
+      activationPrice: 0n,
+      fillsTotal: 1n,
+      fillsDone: 0n,
       createdAt: 1_000n,
       expiry: 4_600n,
     },
@@ -81,8 +87,11 @@ describe("web status words: every OrderStatus and FillBlocker name", () => {
   it("Filled is green, Cancelled grey, Expired amber; None and unknown values are named", () => {
     const expected: Record<string, { text: string; tone: string }> = {
       None: { text: "None", tone: Tone.Unknown },
-      Dormant: { text: "Dormant", tone: Tone.Unknown },
-      PartiallyFilled: { text: "PartiallyFilled", tone: Tone.Unknown },
+      Dormant: { text: "Dormant", tone: Tone.Dormant },
+      PartiallyFilled: {
+        text: "PartiallyFilled · waiting: PriceAboveTarget",
+        tone: Tone.Waiting,
+      },
       Filled: { text: "Filled", tone: Tone.Filled },
       Cancelled: { text: "Cancelled", tone: Tone.Cancelled },
       Expired: { text: "Expired", tone: Tone.Expired },
@@ -92,17 +101,19 @@ describe("web status words: every OrderStatus and FillBlocker name", () => {
       const view = statusView(value, WAITING);
       assert.equal(view.text, expected[name]?.text, name);
       assert.equal(view.tone, expected[name]?.tone, name);
-      assert.equal(view.pulse, false, name);
+      assert.equal(view.pulse, name === "PartiallyFilled", name);
     }
     assert.equal(statusView(9, WAITING).text, "unknown(9)");
   });
 
-  it("Fill now only for Open; Cancel for Open and Expired", () => {
+  it("Fill now and Cancel for Open; only Cancel for Expired; no buttons for None, Filled or Cancelled", () => {
     assert.deepEqual(actionsFor(OrderStatus.Open), {
+      activate: false,
       fill: true,
       cancel: true,
     });
     assert.deepEqual(actionsFor(OrderStatus.Expired), {
+      activate: false,
       fill: false,
       cancel: true,
     });
@@ -111,7 +122,11 @@ describe("web status words: every OrderStatus and FillBlocker name", () => {
       OrderStatus.Filled,
       OrderStatus.Cancelled,
     ]) {
-      assert.deepEqual(actionsFor(status), { fill: false, cancel: false });
+      assert.deepEqual(actionsFor(status), {
+        activate: false,
+        fill: false,
+        cancel: false,
+      });
     }
   });
 });
@@ -165,7 +180,11 @@ describe("web order list: my orders from events and snapshots", () => {
     assert.equal(row.targetPrice, "1500.00");
     assert.equal(row.expiry, 4_600n);
     assert.equal(row.status.text, "Open · waiting: PriceAboveTarget");
-    assert.deepEqual(row.actions, { fill: true, cancel: true });
+    assert.deepEqual(row.actions, {
+      activate: false,
+      fill: true,
+      cancel: true,
+    });
   });
 
   it("after a fill the same order shows Filled, in green, with no buttons", () => {
@@ -178,19 +197,31 @@ describe("web order list: my orders from events and snapshots", () => {
     const after = orderRow(snapshot(1n, ME, OrderStatus.Filled), ME, DECIMALS);
     assert.equal(after.status.text, "Filled");
     assert.equal(after.status.tone, Tone.Filled);
-    assert.deepEqual(after.actions, { fill: false, cancel: false });
+    assert.deepEqual(after.actions, {
+      activate: false,
+      fill: false,
+      cancel: false,
+    });
   });
 
   it("an expired order still gets a Cancel button, since it still takes a slot", () => {
     const row = orderRow(snapshot(1n, ME, OrderStatus.Expired), ME, DECIMALS);
     assert.equal(row.status.text, "Expired");
-    assert.deepEqual(row.actions, { fill: false, cancel: true });
+    assert.deepEqual(row.actions, {
+      activate: false,
+      fill: false,
+      cancel: true,
+    });
   });
 
   it("a looked-up order placed by someone else is marked as not mine", () => {
     const row = orderRow(snapshot(2n, OTHER, OrderStatus.Open), ME, DECIMALS);
     assert.equal(row.mine, false);
-    assert.deepEqual(row.actions, { fill: true, cancel: true });
+    assert.deepEqual(row.actions, {
+      activate: false,
+      fill: true,
+      cancel: true,
+    });
     assert.equal(isMine(OTHER, undefined), false);
     assert.equal(isMine(OTHER.toLowerCase(), OTHER), true);
   });
