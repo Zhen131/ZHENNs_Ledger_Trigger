@@ -961,44 +961,43 @@ contract LedgerTrigger is ReentrancyGuard {
     /// several of them.
     /// @dev Only the order's owner or its executor can call it. It takes no address and no
     /// instruction from the caller: the token, the price feed, the swap venue and the receipt
-    /// contract are fixed at deployment, and the recipient is fixed in the order. Rejects, in this order: a call made
-    /// while a fill is already running (`ReentrancyGuardReentrantCall`); an ID that no order has
-    /// (`OrderNotFound`); a caller other than the owner and the executor
+    /// contract are fixed at deployment, and the recipient is fixed in the order. Rejects, in this
+    /// order: a call made while a fill is already running (`ReentrancyGuardReentrantCall`); an ID
+    /// that no order has (`OrderNotFound`); a caller other than the owner and the executor
     /// (`NotOrderOwnerOrExecutor`); then the checks that `canFill` reports, each with its own
-    /// error: stored status not `Open` or `PartiallyFilled` (`OrderNotOpen`, which names the
-    /// stored status, `Dormant` for an order not activated yet), expiry passed (`OrderExpired`),
-    /// for a `Dca` order its period 0 not begun yet (`NotStarted`) or its current period bought
-    /// already (`PeriodAlreadyFilled`), price zero or below or updated after the current block's
-    /// time (`InvalidPrice`), price older than `maxPriceAge` (`StalePrice`), price above the
-    /// price cap of this fill (`PriceAboveTarget`), owner's allowance below the amount of this
-    /// fill (`InsufficientAllowance`), owner's balance below the amount of this fill
+    /// error: stored status not `Open` or `PartiallyFilled` (`OrderNotOpen`, which names the stored
+    /// status, `Dormant` for an order not activated yet), expiry passed (`OrderExpired`), for a
+    /// `Dca` order its period 0 not begun yet (`NotStarted`) or its current period bought already
+    /// (`PeriodAlreadyFilled`), price zero or below or updated after the current block's time
+    /// (`InvalidPrice`), price older than `maxPriceAge` (`StalePrice`), price above the price cap
+    /// of this fill (`PriceAboveTarget`), owner's allowance below the amount of this fill
+    /// (`InsufficientAllowance`), owner's balance below the amount of this fill
     /// (`InsufficientBalance`). The amount of this fill is the order's `usdcRemaining` for a
-    /// `Limit` order, its amount per period for a `Dca` order and the amount of its next tier for
-    /// a `Ladder` order; the price cap of this fill is the order's target price, or for a `Ladder`
+    /// `Limit` order, its amount per period for a `Dca` order and the amount of its next tier for a
+    /// `Ladder` order; the price cap of this fill is the order's target price, or for a `Ladder`
     /// order the price of its next tier. A price exactly `maxPriceAge` old counts as fresh, and a
-    /// price equal to the price cap can fill. Then it counts the fill and takes its amount off
-    /// the order's `usdcRemaining` and off the owner's open total; for a `Dca` order it records
-    /// the current period as bought, so the next fill can only come in a later period; for a
-    /// `Ladder` order the higher fill count points at its next tier; on the order's last fill it
-    /// marks the order `Filled` and takes it off
-    /// the owner's open count, and on any earlier fill it marks the order `PartiallyFilled`. Then
-    /// it takes the amount from the owner, approves the swap venue for that amount and swaps it
-    /// with a minimum ETH output. It trusts its own balances, not the venue's return value:
-    /// its USDC balance must be back to what it was before the USDC was taken
+    /// price equal to the price cap can fill. Then it counts the fill and takes its amount off the
+    /// order's `usdcRemaining` and off the owner's open total; for a `Dca` order it records the
+    /// current period as bought, so the next fill can only come in a later period; for a `Ladder`
+    /// order the higher fill count points at its next tier; on the order's last fill it marks the
+    /// order `Filled` and takes it off the owner's open count, and on any earlier fill it marks the
+    /// order `PartiallyFilled`. Then it takes the amount from the owner, approves the swap venue
+    /// for that amount and swaps it with a minimum ETH output. It trusts its own balances, not the
+    /// venue's return value: its USDC balance must be back to what it was before the USDC was taken
     /// (`SwapUsdcMismatch`), and its ETH balance must have gone up by at least the minimum
     /// (`InsufficientEthOut`). It then sets the venue's allowance back to zero, sends all of the
-    /// ETH that came in to the recipient (`EthTransferFailed`), has the receipt contract issue
-    /// the order's owner one receipt for this fill, and emits `OrderFilled`. If the receipt
-    /// cannot be issued, the whole fill reverts. If the price feed, the USDC token, the swap venue
-    /// or the receipt contract reverts on the way, the fill reverts with that call's own revert
-    /// data, unchanged even when it is empty. Only the two approvals of the swap
-    /// venue (to the amount, then back to zero) are handled differently: if one reverts or
-    /// returns false, OpenZeppelin's `forceApprove` tries again, setting the allowance to zero and
-    /// then to the wanted amount, and a revert in those two calls is passed on. A USDC transfer that
-    /// returns something other than true, such as false, instead of reverting, or an approval that
-    /// returns false when tried again, makes the fill revert with `SafeERC20FailedOperation`. Any
-    /// rejection undoes the whole call: the order keeps the status it had, and no USDC or ETH
-    /// moves. The minimum ETH output, in wei, is the larger of
+    /// ETH that came in to the recipient (`EthTransferFailed`), has the receipt contract issue the
+    /// order's owner one receipt for this fill, and emits `OrderFilled`. If the receipt cannot be
+    /// issued, the whole fill reverts. If the price feed, the USDC token, the swap venue or the
+    /// receipt contract reverts on the way, the fill reverts with that call's own revert data,
+    /// unchanged even when it is empty. Only the two approvals of the swap venue (to the amount,
+    /// then back to zero) are handled differently: if one reverts or returns false, OpenZeppelin's
+    /// `forceApprove` tries again, setting the allowance to zero and then to the wanted amount, and
+    /// a revert in those two calls is passed on. A USDC transfer that returns something other than
+    /// true, such as false, instead of reverting, or an approval that returns false when tried
+    /// again, makes the fill revert with `SafeERC20FailedOperation`. Any rejection undoes the whole
+    /// call: the order keeps the status it had, and no USDC or ETH moves. The minimum ETH output,
+    /// in wei, is the larger of
     /// `amount * 10^k / priceCap` (never pay more than the price cap of this fill) and
     /// `amount * 10^k * (10000 - maxSlippageBps) / (price * 10000)` (never get much less than
     /// the feed price gives), each worked out in full and rounded down once, with
