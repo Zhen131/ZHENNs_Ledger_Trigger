@@ -660,10 +660,11 @@ contract LedgerTrigger is ReentrancyGuard {
     /// (`PriceAboveTarget`), owner's allowance below the amount of this fill
     /// (`InsufficientAllowance`), owner's balance below the amount of this fill
     /// (`InsufficientBalance`). A price exactly `maxPriceAge` old counts as fresh, and a price
-    /// equal to the target price can fill. Then it counts the fill, takes its amount off the
-    /// order's `usdcRemaining`, marks the order `Filled`, takes it off the owner's open count and
-    /// total, takes the amount from the owner, approves the swap venue for that amount and swaps
-    /// it with a minimum ETH output. It trusts its own balances, not the venue's return value:
+    /// equal to the target price can fill. Then it counts the fill and takes its amount off the
+    /// order's `usdcRemaining` and off the owner's open total; on the order's last fill it marks
+    /// the order `Filled` and takes it off the owner's open count, and on any earlier fill it
+    /// marks the order `PartiallyFilled`. Then it takes the amount from the owner, approves the
+    /// swap venue for that amount and swaps it with a minimum ETH output. It trusts its own balances, not the venue's return value:
     /// its USDC balance must be back to what it was before the USDC was taken
     /// (`SwapUsdcMismatch`), and its ETH balance must have gone up by at least the minimum
     /// (`InsufficientEthOut`). It then sets the venue's allowance back to zero, sends all of the
@@ -947,17 +948,22 @@ contract LedgerTrigger is ReentrancyGuard {
         );
     }
 
-    /// @notice Step 6 of a fill: counts the fill, takes its amount off what the order has left to
-    /// spend, marks the order `Filled`, and takes it off the owner's open count and its amount off
-    /// the owner's open total.
+    /// @notice Step 6 of a fill: counts the fill and takes its amount off what the order has left
+    /// to spend. When this is the last of the order's fills, it marks the order `Filled` and takes
+    /// it off the owner's open count; otherwise it marks the order `PartiallyFilled` and the order
+    /// keeps its slot. Either way it takes the amount off the owner's open total.
     /// @param order The order.
     /// @param amount The USDC this fill spends.
     function _recordFill(Order storage order, uint256 amount) private {
-        ++order.fillsDone;
+        uint256 fillsDone = ++order.fillsDone;
         order.usdcRemaining -= amount;
-        order.status = OrderStatus.Filled;
         OpenOrders storage open = openOrdersOf[order.owner];
-        --open.count;
+        if (fillsDone == order.fillsTotal) {
+            order.status = OrderStatus.Filled;
+            --open.count;
+        } else {
+            order.status = OrderStatus.PartiallyFilled;
+        }
         open.total -= amount;
     }
 
@@ -994,40 +1000,61 @@ contract LedgerTrigger is ReentrancyGuard {
     function _checkFill(
         Order storage order
     ) private view returns (FillCheck memory check) {
-        OrderStatus status = order.status;
-        if (!_isOpen(status)) {
-            check.blocker =
-                status == OrderStatus.Dormant
-                    ? FillBlocker.Dormant
-                    : FillBlocker.NotOpen;
-            return check;
-        }
-        if (_isExpired(order)) {
-            check.blocker = FillBlocker.Expired;
-            return check;
-        }
+        check.blocker = _checkStatusAndExpiry(order);
+        if (check.blocker != FillBlocker.None) return check;
         // A `Limit` order spends all it has left, at no more than its target price.
         check.amount = order.usdcRemaining;
         check.priceCap = order.targetPrice;
+        _checkPriceAndFunds(order.owner, check);
+    }
+
+    /// @notice The first two fill checks: stored status (`NotOpen` for a finished order, `Dormant`
+    /// for one not activated), then expiry.
+    /// @param order The order.
+    /// @return blocker The first reason found, or `None`.
+    function _checkStatusAndExpiry(
+        Order storage order
+    ) private view returns (FillBlocker blocker) {
+        OrderStatus status = order.status;
+        if (!_isOpen(status)) {
+            return
+                status == OrderStatus.Dormant
+                    ? FillBlocker.Dormant
+                    : FillBlocker.NotOpen;
+        }
+        if (_isExpired(order)) return FillBlocker.Expired;
+        return FillBlocker.None;
+    }
+
+    /// @notice The last fill checks, once the amount and the price cap of this fill are in
+    /// `check`: price (above zero and not updated in the future, then not older than
+    /// `maxPriceAge`, then not above the price cap), allowance, balance. Records in `check` the
+    /// first reason found and the values read on the way.
+    /// @param owner The order's owner, whose allowance and balance are read.
+    /// @param check What the checks found so far; updated in place.
+    function _checkPriceAndFunds(
+        address owner,
+        FillCheck memory check
+    ) private view {
         (check.price, check.updatedAt) = _latestPrice();
         if (_isInvalidPrice(check.price, check.updatedAt)) {
             check.blocker = FillBlocker.InvalidPrice;
-            return check;
+            return;
         }
         if (_isStalePrice(check.updatedAt)) {
             check.blocker = FillBlocker.StalePrice;
-            return check;
+            return;
         }
         if (uint256(check.price) > check.priceCap) {
             check.blocker = FillBlocker.PriceAboveTarget;
-            return check;
+            return;
         }
-        check.allowance = usdc.allowance(order.owner, address(this));
+        check.allowance = usdc.allowance(owner, address(this));
         if (check.allowance < check.amount) {
             check.blocker = FillBlocker.InsufficientAllowance;
-            return check;
+            return;
         }
-        check.balance = usdc.balanceOf(order.owner);
+        check.balance = usdc.balanceOf(owner);
         if (check.balance < check.amount) {
             check.blocker = FillBlocker.InsufficientBalance;
         }
