@@ -18,6 +18,7 @@ export default defineConfig({
   ],
   solidity: {
     version: "0.8.34",
+    settings: { optimizer: { enabled: true, runs: 200 } },
   },
   networks: {
     // The Sepolia test network, selected only with `--network sepolia`. The
