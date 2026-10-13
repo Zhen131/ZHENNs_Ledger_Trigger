@@ -43,13 +43,17 @@ export const VARIABLES = {
   fundEth: "TRIGGER_FUND_ETH",
   priceUsd: "TRIGGER_PRICE_USD",
   // Placing a time-scheduled order: the amount, the length and the number of
-  // its periods, when its first period begins, and its activation price. Its
-  // price cap is TRIGGER_TARGET_PRICE_USD.
+  // its periods, and when its first period begins. Its price cap is
+  // TRIGGER_TARGET_PRICE_USD. The activation price is read when placing a
+  // time-scheduled order or a Ladder order.
   usdcPerPeriod: "TRIGGER_USDC_PER_PERIOD",
   periodSeconds: "TRIGGER_PERIOD_SECONDS",
   periodCount: "TRIGGER_PERIOD_COUNT",
   startAt: "TRIGGER_START_AT",
   activationPriceUsd: "TRIGGER_ACTIVATION_PRICE_USD",
+  // Placing a Ladder order: its tiers, each a price and an amount. Its expiry
+  // is TRIGGER_EXPIRY_MINUTES.
+  tiers: "TRIGGER_TIERS",
   // Moving the local chain's clock forward.
   advanceSeconds: "TRIGGER_ADVANCE_SECONDS",
 } as const;

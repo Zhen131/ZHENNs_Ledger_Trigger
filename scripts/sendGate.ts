@@ -1,7 +1,8 @@
 // The one gate that every script which sends transactions passes before it
 // sends anything: the deployment, placing an order, placing a time-scheduled
-// order, cancelling an order, stocking the swap venue with ETH, setting the
-// mock price, moving the local chain's clock, and the demo.
+// order, placing a Ladder order, cancelling an order, stocking the swap venue
+// with ETH, setting the mock price, moving the local chain's clock, and the
+// demo.
 //
 // The gate looks at the chain ID the node reports:
 //
@@ -9,7 +10,7 @@
 //   every script may send.
 // - Any other chain: nothing is sent unless the environment variable
 //   TRIGGER_CONFIRM_PUBLIC_NETWORK holds exactly CONFIRM_PHRASE. Even then only
-//   the deployment with external parts, placing either kind of order,
+//   the deployment with external parts, the three scripts that place orders,
 //   cancelling and stocking may send. The demo, setting the mock price, moving
 //   the clock and the deployment with mock parts never run on another chain,
 //   whatever the variable holds: they only make sense on a local chain.
@@ -72,6 +73,8 @@ export const GatedScript = {
   PlaceDcaOrder: "place-dca-order",
   /** Moving the local chain's clock forward. */
   AdvanceTime: "advance-time",
+  /** Placing a Ladder order. */
+  PlaceLadderOrder: "place-ladder-order",
 } as const;
 export type GatedScript = (typeof GatedScript)[keyof typeof GatedScript];
 

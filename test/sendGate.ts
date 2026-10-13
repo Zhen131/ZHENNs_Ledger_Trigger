@@ -21,6 +21,7 @@ const CONFIRMABLE = [
   GatedScript.CancelOrder,
   GatedScript.FundVenue,
   GatedScript.PlaceDcaOrder,
+  GatedScript.PlaceLadderOrder,
 ];
 const NEVER_ELSEWHERE = [
   GatedScript.Demo,
@@ -33,7 +34,7 @@ const NEVER_ELSEWHERE = [
 const OTHER_CHAINS = [11_155_111, 1, 999];
 
 describe("send gate: the decision", () => {
-  it("lists exactly the nine scripts that send transactions", () => {
+  it("lists exactly the ten scripts that send transactions", () => {
     assert.deepEqual([...ALL_SCRIPTS].sort(), [
       "advance-time",
       "cancel-order",
@@ -42,6 +43,7 @@ describe("send gate: the decision", () => {
       "deploy-mocks",
       "fund-venue",
       "place-dca-order",
+      "place-ladder-order",
       "place-order",
       "set-price",
     ]);

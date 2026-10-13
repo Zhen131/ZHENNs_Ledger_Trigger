@@ -21,6 +21,10 @@ import {
   placeDcaOrder,
   placeDcaOrderSettingsFrom,
 } from "../scripts/placeDcaOrder.ts";
+import {
+  placeLadderOrder,
+  placeLadderOrderSettingsFrom,
+} from "../scripts/placeLadderOrder.ts";
 import { ScriptError } from "../scripts/scriptError.ts";
 import { CONFIRM_PHRASE, LOCAL_CHAIN_ID } from "../scripts/sendGate.ts";
 import { VARIABLES } from "../scripts/settings.ts";
@@ -157,6 +161,21 @@ const SCRIPTS: readonly (readonly [
         confirmation,
         settings: advanceTimeSettingsFrom({
           [VARIABLES.advanceSeconds]: "3600",
+        }),
+      }),
+  ],
+  [
+    "place-ladder-order",
+    (s, confirmation) =>
+      placeLadderOrder({
+        viem: s.viem,
+        confirmation,
+        settings: placeLadderOrderSettingsFrom({
+          [VARIABLES.contractAddress]: s.trigger.address,
+          [VARIABLES.tiers]: "2000:1,1900:2,1800:3",
+          [VARIABLES.expiryMinutes]: "10",
+          [VARIABLES.recipientAddress]: s.recipient.account.address,
+          [VARIABLES.executorAddress]: s.executor.account.address,
         }),
       }),
   ],
