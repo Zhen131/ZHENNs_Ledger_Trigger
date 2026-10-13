@@ -8,14 +8,16 @@
 //
 // | Argument names                                    | Written as                    |
 // | ------------------------------------------------- | ----------------------------- |
-// | price, targetPrice                                | USD, with the price decimals  |
+// | price, targetPrice, activationPrice               | USD, with the price decimals  |
 // | amount, max, allowance, balance, needed           | USDC, with the USDC decimals  |
 // | expiry, currentTime, updatedAt, maxPriceAge       | the whole number as it is     |
 // | any address                                       | shortened, 0xf39F…2266        |
-// | anything else (an order ID, a status, wei)        | as it is                      |
+// | anything else (AS_IS_ARGUMENTS: an order ID, a    | as it is                      |
+// | status, a count, a period or tier number, wei)    |                               |
 //
-// One exception: `max` in TooManyOpenOrders is a number of orders, not USDC,
-// so it is written as it is.
+// Two exceptions (COUNT_ARGUMENTS): `max` in TooManyOpenOrders is a number of
+// orders, not USDC, and `amount` in EthTransferFailed is wei, not USDC; both
+// are written as they are.
 
 import {
   BaseError,
@@ -31,7 +33,11 @@ import { formatAmount } from "./amounts.ts";
 import { shortAddress } from "./format.ts";
 import type { Decimals } from "./orders.ts";
 
-export const PRICE_ARGUMENTS: readonly string[] = ["price", "targetPrice"];
+export const PRICE_ARGUMENTS: readonly string[] = [
+  "price",
+  "targetPrice",
+  "activationPrice",
+];
 export const USDC_ARGUMENTS: readonly string[] = [
   "amount",
   "max",
@@ -45,8 +51,35 @@ export const WHOLE_ARGUMENTS: readonly string[] = [
   "updatedAt",
   "maxPriceAge",
 ];
+/**
+ * The integer arguments written as they are: IDs, statuses, counts, period
+ * and tier numbers, a start time, wei and basis points. Nothing reads this
+ * list to format an argument (anything not in the lists above is written as
+ * it is); a test checks that every integer argument of the contract's errors
+ * is in exactly one of the four lists, so a new argument cannot slip through
+ * in the wrong unit.
+ */
+export const AS_IS_ARGUMENTS: readonly string[] = [
+  "orderId",
+  "status",
+  "received",
+  "minEthOut",
+  "expectedBalance",
+  "actualBalance",
+  "maxSlippageBps",
+  "periodCount",
+  "maxPeriods",
+  "startAt",
+  "periodIndex",
+  "tierCount",
+  "maxTiers",
+  "tierIndex",
+];
 /** `<error>.<argument>` pairs written as they are whatever the lists say. */
-export const COUNT_ARGUMENTS: readonly string[] = ["TooManyOpenOrders.max"];
+export const COUNT_ARGUMENTS: readonly string[] = [
+  "TooManyOpenOrders.max",
+  "EthTransferFailed.amount",
+];
 
 /** The longest text kept from an error that has no name in the ABI. */
 export const RAW_MESSAGE_LIMIT = 120;

@@ -9,6 +9,7 @@ import {
   type FeedEntry,
   type LogPosition,
 } from "../web/src/lib/feed.ts";
+import { OrderKind } from "../web/src/lib/kinds.ts";
 
 // The event list keeps the newest events of the contract, each once, newest
 // first, at most FEED_LIMIT of them.
@@ -39,6 +40,8 @@ function created(
         owner: OWNER,
         usdcAmount: 100_000_000n,
         targetPrice: 150_000_000_000n,
+        kind: OrderKind.Limit,
+        activationPrice: 0n,
       },
       position: at(blockNumber, logIndex),
     },
@@ -56,6 +59,8 @@ function filled(orderId: bigint, blockNumber: bigint): FeedEntry {
         usdcAmount: 100_000_000n,
         ethReceived: 52_631_578_947_368_421n,
         price: 190_000_000_000n,
+        fillNumber: 1n,
+        fillsTotal: 1n,
       },
       position: at(blockNumber),
     },
