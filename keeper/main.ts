@@ -257,6 +257,7 @@ async function main(): Promise<number> {
         fromBlock: config.fromBlock,
         maxFeeWei: config.maxFeeWei,
         maxBlockRange: config.maxBlockRange,
+        maxFillsPerOrderPerRound: config.maxFillsPerOrderPerRound,
       },
       abis,
       log: print,
