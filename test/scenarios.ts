@@ -59,10 +59,10 @@ function runCheck(...args: string[]) {
 }
 
 describe("scenario coverage check: which titles count", () => {
-  it("lists the 26 scenario numbers from the specification", () => {
-    assert.equal(SCENARIOS.length, 26);
+  it("lists the 36 scenario numbers from the specification", () => {
+    assert.equal(SCENARIOS.length, 36);
     assert.equal(SCENARIOS[0], number(1));
-    assert.equal(SCENARIOS[25], number(26));
+    assert.equal(SCENARIOS[35], number(36));
   });
 
   it("counts a test whose own title starts with the number", () => {
@@ -155,12 +155,12 @@ describe("scenario coverage check: which titles count", () => {
     );
   });
 
-  it("does not count a title that starts with a placeholder, or numbers outside S01 to S26", () => {
+  it("does not count a title that starts with a placeholder, or numbers outside S01 to S36", () => {
     assert.deepEqual(
       counted(
         call("it", `\${code} a`, "`"),
         call("it", `${number(0)} b`),
-        call("it", `${number(27)} c`),
+        call("it", `${number(37)} c`),
       ),
       [],
     );
@@ -174,7 +174,7 @@ describe("scenario coverage check: whole directories", () => {
       { scenario: number(26), file: "a.ts", line: 2, title: "" },
     ];
     const missing = missingScenarios(tests);
-    assert.equal(missing.length, 24);
+    assert.equal(missing.length, SCENARIOS.length - 2);
     assert.ok(!missing.includes(number(2)));
     assert.ok(!missing.includes(number(26)));
     assert.equal(missing[0], number(1));
