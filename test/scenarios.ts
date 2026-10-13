@@ -59,10 +59,10 @@ function runCheck(...args: string[]) {
 }
 
 describe("scenario coverage check: which titles count", () => {
-  it("lists the 49 scenario numbers from the specification", () => {
-    assert.equal(SCENARIOS.length, 49);
+  it("lists the 55 scenario numbers from the specification", () => {
+    assert.equal(SCENARIOS.length, 55);
     assert.equal(SCENARIOS[0], number(1));
-    assert.equal(SCENARIOS[48], number(49));
+    assert.equal(SCENARIOS[54], number(55));
   });
 
   it("counts a test whose own title starts with the number", () => {
@@ -155,12 +155,12 @@ describe("scenario coverage check: which titles count", () => {
     );
   });
 
-  it("does not count a title that starts with a placeholder, or numbers outside S01 to S49", () => {
+  it("does not count a title that starts with a placeholder, or numbers outside S01 to S55", () => {
     assert.deepEqual(
       counted(
         call("it", `\${code} a`, "`"),
         call("it", `${number(0)} b`),
-        call("it", `${number(50)} c`),
+        call("it", `${number(56)} c`),
       ),
       [],
     );

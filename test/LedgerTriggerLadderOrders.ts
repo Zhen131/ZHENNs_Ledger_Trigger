@@ -361,7 +361,7 @@ describe("LedgerTrigger createLadderOrder: rejected parties, expiry and slots (S
     ["a zero recipient", { recipient: zeroAddress }, "ZeroRecipient"],
     ["a zero executor", { executor: zeroAddress }, "ZeroExecutor"],
   ] as const) {
-    it(`S52 rejects ${label} with ${error}, and stores nothing`, async () => {
+    it(`S52 rejects a Ladder order with ${label}: ${error}, and stores nothing`, async () => {
       const f = await setUpFills();
 
       await f.viem.assertions.revertWithCustomErrorWithArgs(
