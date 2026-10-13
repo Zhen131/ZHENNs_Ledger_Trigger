@@ -19,6 +19,8 @@
     "fund-venue": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/fund-venue.ts",
     "order-status": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/order-status.ts",
     "set-price": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/set-price.ts",
+    "place-dca-order": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/place-dca-order.ts",
+    "advance-time": "HARDHAT_DISABLE_TELEMETRY=true hardhat run scripts/cli/advance-time.ts",
     "web": "vite",
     "web:build": "vite build",
     "web:preview": "vite preview",

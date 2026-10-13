@@ -13,6 +13,14 @@ import {
 } from "../scripts/deploy.ts";
 import { fundVenue, fundVenueSettingsFrom } from "../scripts/fundVenue.ts";
 import { placeOrder, placeOrderSettingsFrom } from "../scripts/placeOrder.ts";
+import {
+  advanceTime,
+  advanceTimeSettingsFrom,
+} from "../scripts/advanceTime.ts";
+import {
+  placeDcaOrder,
+  placeDcaOrderSettingsFrom,
+} from "../scripts/placeDcaOrder.ts";
 import { ScriptError } from "../scripts/scriptError.ts";
 import { CONFIRM_PHRASE, LOCAL_CHAIN_ID } from "../scripts/sendGate.ts";
 import { VARIABLES } from "../scripts/settings.ts";
@@ -124,9 +132,41 @@ const SCRIPTS: readonly (readonly [
         }),
       }),
   ],
+  [
+    "place-dca-order",
+    (s, confirmation) =>
+      placeDcaOrder({
+        viem: s.viem,
+        confirmation,
+        settings: placeDcaOrderSettingsFrom({
+          [VARIABLES.contractAddress]: s.trigger.address,
+          [VARIABLES.usdcPerPeriod]: "1",
+          [VARIABLES.targetPriceUsd]: "2000",
+          [VARIABLES.periodSeconds]: "3600",
+          [VARIABLES.periodCount]: "3",
+          [VARIABLES.recipientAddress]: s.recipient.account.address,
+          [VARIABLES.executorAddress]: s.executor.account.address,
+        }),
+      }),
+  ],
+  [
+    "advance-time",
+    (s, confirmation) =>
+      advanceTime({
+        viem: s.viem,
+        confirmation,
+        settings: advanceTimeSettingsFrom({
+          [VARIABLES.advanceSeconds]: "3600",
+        }),
+      }),
+  ],
 ];
 
-const LOCAL_ONLY = new Set(["set-price", "deploy with mock parts"]);
+const LOCAL_ONLY = new Set([
+  "set-price",
+  "deploy with mock parts",
+  "advance-time",
+]);
 
 async function assertRefusedAndNothingSent(
   s: Ready,

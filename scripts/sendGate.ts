@@ -1,6 +1,7 @@
 // The one gate that every script which sends transactions passes before it
-// sends anything: the deployment, placing an order, cancelling an order,
-// stocking the swap venue with ETH, setting the mock price, and the demo.
+// sends anything: the deployment, placing an order, placing a time-scheduled
+// order, cancelling an order, stocking the swap venue with ETH, setting the
+// mock price, moving the local chain's clock, and the demo.
 //
 // The gate looks at the chain ID the node reports:
 //
@@ -8,10 +9,10 @@
 //   every script may send.
 // - Any other chain: nothing is sent unless the environment variable
 //   TRIGGER_CONFIRM_PUBLIC_NETWORK holds exactly CONFIRM_PHRASE. Even then only
-//   the deployment with external parts, placing, cancelling and stocking may
-//   send. The demo, setting the mock price and the deployment with mock parts
-//   never run on another chain, whatever the variable holds: they only make
-//   sense on a local chain.
+//   the deployment with external parts, placing either kind of order,
+//   cancelling and stocking may send. The demo, setting the mock price, moving
+//   the clock and the deployment with mock parts never run on another chain,
+//   whatever the variable holds: they only make sense on a local chain.
 //
 // `checkSendGate` decides from the chain ID and the variable's value alone, so
 // it can be tested without any network. `passSendGate` asks the node for the
@@ -67,6 +68,10 @@ export const GatedScript = {
   FundVenue: "fund-venue",
   SetPrice: "set-price",
   Demo: "demo",
+  /** Placing a time-scheduled order. */
+  PlaceDcaOrder: "place-dca-order",
+  /** Moving the local chain's clock forward. */
+  AdvanceTime: "advance-time",
 } as const;
 export type GatedScript = (typeof GatedScript)[keyof typeof GatedScript];
 
@@ -75,6 +80,7 @@ export const LOCAL_ONLY: readonly GatedScript[] = [
   GatedScript.DeployMocks,
   GatedScript.SetPrice,
   GatedScript.Demo,
+  GatedScript.AdvanceTime,
 ];
 
 export type GateDecision =

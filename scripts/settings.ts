@@ -42,6 +42,16 @@ export const VARIABLES = {
   orderId: "TRIGGER_ORDER_ID",
   fundEth: "TRIGGER_FUND_ETH",
   priceUsd: "TRIGGER_PRICE_USD",
+  // Placing a time-scheduled order: the amount, the length and the number of
+  // its periods, when its first period begins, and its activation price. Its
+  // price cap is TRIGGER_TARGET_PRICE_USD.
+  usdcPerPeriod: "TRIGGER_USDC_PER_PERIOD",
+  periodSeconds: "TRIGGER_PERIOD_SECONDS",
+  periodCount: "TRIGGER_PERIOD_COUNT",
+  startAt: "TRIGGER_START_AT",
+  activationPriceUsd: "TRIGGER_ACTIVATION_PRICE_USD",
+  // Moving the local chain's clock forward.
+  advanceSeconds: "TRIGGER_ADVANCE_SECONDS",
 } as const;
 
 /** The environment, usually `process.env`. */
