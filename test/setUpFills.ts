@@ -1,8 +1,9 @@
 // Sets up a brand-new local chain on which orders can be filled, for the fill
 // tests. On top of `deployLedgerTrigger` it stocks the mock swap venue with
 // ETH, gives `owner` and `otherOwner` 1000 USDC each with a matching allowance
-// to LedgerTrigger, and adds helpers to place, fill and inspect orders, and to
-// place, activate and inspect dormant ones.
+// to LedgerTrigger, and adds helpers to place, fill and inspect orders, to
+// place, activate and inspect dormant ones, and to place time-scheduled (Dca)
+// ones and read their schedules.
 //
 // This file holds no tests; test files import `setUpFills` from it.
 //
@@ -153,6 +154,21 @@ export type OrderInput = {
 export type DormantInput = OrderInput & {
   readonly activationPrice: bigint;
 };
+
+/** The fields of DcaOrderParams, the one input of createDcaOrder. */
+export type DcaInput = {
+  readonly usdcPerPeriod: bigint;
+  readonly targetPrice: bigint;
+  readonly periodLength: bigint;
+  readonly periodCount: bigint;
+  readonly startAt: bigint;
+  readonly activationPrice: bigint;
+  readonly recipient: Address;
+  readonly executor: Address;
+};
+
+/** One day in seconds: the period length of the default Dca input. */
+export const ONE_DAY = 86_400n;
 
 export type SetUpOptions = DeployOptions & {
   /** ETH sent to the mock swap venue after deployment. Default: 100 ETH. */
@@ -443,6 +459,80 @@ export async function setUpFills(options: SetUpOptions = {}) {
     };
   }
 
+  /**
+   * The default Dca input: 100 USDC per period at a cap of 2000 USD, three
+   * periods of one day starting in the block that places the order (a start
+   * time of zero), no activation price.
+   */
+  function defaultDcaInput(): DcaInput {
+    return {
+      usdcPerPeriod: 100n * ONE_USDC,
+      targetPrice: usd(2_000n),
+      periodLength: ONE_DAY,
+      periodCount: 3n,
+      startAt: 0n,
+      activationPrice: 0n,
+      recipient: recipient.account.address,
+      executor: executor.account.address,
+    };
+  }
+
+  /**
+   * Sends createDcaOrder with `input` as `from` (default: the owner) to `on`
+   * (default: the main LedgerTrigger). Returns the hash promise.
+   */
+  function sendPlaceDca(
+    input: DcaInput,
+    from: Wallet = owner,
+    on: Trigger = trigger,
+  ): Promise<Hash> {
+    return on.write.createDcaOrder([input], { account: from.account });
+  }
+
+  /**
+   * Places a Dca order with the default Dca input changed by `changes`, as
+   * `from`, on `on` (default: the main LedgerTrigger), and checks that it
+   * logged exactly one OrderCreated and one OrderScheduled. Returns its ID,
+   * the input, the receipt and the two events.
+   */
+  async function placeDca(
+    changes: Partial<DcaInput> = {},
+    from: Wallet = owner,
+    on: Trigger = trigger,
+  ) {
+    const input = { ...defaultDcaInput(), ...changes };
+    const receipt = await mined(await sendPlaceDca(input, from, on));
+    const created = parseEventLogs({
+      abi: on.abi,
+      logs: receipt.logs,
+      eventName: "OrderCreated",
+    });
+    const scheduled = parseEventLogs({
+      abi: on.abi,
+      logs: receipt.logs,
+      eventName: "OrderScheduled",
+    });
+    assert.equal(created.length, 1);
+    assert.equal(scheduled.length, 1);
+    const [createdEvent] = created;
+    const [scheduledEvent] = scheduled;
+    if (createdEvent === undefined || scheduledEvent === undefined) {
+      throw new Error("no OrderCreated or OrderScheduled event");
+    }
+    return {
+      orderId: createdEvent.args.orderId,
+      input,
+      receipt,
+      created: createdEvent,
+      scheduled: scheduledEvent,
+    };
+  }
+
+  /** The schedule of a Dca order, as getSchedule returns it. */
+  function scheduleOf(orderId: bigint, on: Trigger = trigger) {
+    return on.read.getSchedule([orderId]);
+  }
+
   return {
     ...fixture,
     approve,
@@ -462,5 +552,9 @@ export async function setUpFills(options: SetUpOptions = {}) {
     sendActivate,
     activate,
     canActivate,
+    defaultDcaInput,
+    sendPlaceDca,
+    placeDca,
+    scheduleOf,
   };
 }

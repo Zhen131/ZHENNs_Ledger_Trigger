@@ -21,6 +21,11 @@ import {ISwapVenue} from "./interfaces/ISwapVenue.sol";
 /// cannot be filled until the price feed reports a price at or above the activation price and
 /// the owner or the executor activates it. Activating moves no tokens and no ETH either; from
 /// then on the order is open and waits for the price to fall back to its target.
+/// An order can also be time-scheduled: from its start time on, it buys a set amount of USDC's
+/// worth of ETH once in each period, for a number of periods, each time at no more than its
+/// target price. A period that passes without a fill is skipped for good. The owner approves the
+/// whole budget once; each fill takes the amount of one period. Such an order is partly filled
+/// after its first fill and filled after its last.
 /// @dev There is no admin: no pause, no upgrade, no setter and no withdrawal. The nine deployment
 /// parameters can never change. The status `Expired` is never stored; `statusOf` works it out from
 /// the expiry. A fill keeps none of the USDC and ETH it moves: it passes all of both straight
@@ -40,7 +45,7 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @dev `Limit`: one fill that spends the whole amount, at no more than the target price.
     /// `Dca`: a set amount bought once per period over a number of periods. `Ladder`: amounts
     /// bought one tier at a time, at falling prices. Every order this contract places is a
-    /// `Limit` order.
+    /// `Limit` or a `Dca` order.
     enum OrderKind {
         Limit,
         Dca,
@@ -69,11 +74,11 @@ contract LedgerTrigger is ReentrancyGuard {
     /// `Dca` order whose first period has not begun. `PeriodAlreadyFilled`: a `Dca` order whose
     /// current period has been bought already. `InvalidPrice`: the feed's price is zero or below,
     /// or its update time is after the current block's time. `StalePrice`: the price is older than
-    /// `maxPriceAge`. `PriceAboveTarget`: the price is above the most this fill may pay, which for
-    /// a `Limit` order is its target price. `InsufficientAllowance`: the owner's USDC allowance to
-    /// this contract is below the amount of this fill. `InsufficientBalance`: the owner's USDC
-    /// balance is below the amount of this fill. When several apply, the first in this list is
-    /// reported.
+    /// `maxPriceAge`. `PriceAboveTarget`: the price is above the most this fill may pay, which is
+    /// the order's target price: for a `Dca` order, the cap of every period. `InsufficientAllowance`:
+    /// the owner's USDC allowance to this contract is below the amount of this fill, which for a
+    /// `Dca` order is its amount per period. `InsufficientBalance`: the owner's USDC balance is
+    /// below the amount of this fill. When several apply, the first in this list is reported.
     enum FillBlocker {
         None,
         NotOpen,
@@ -108,7 +113,8 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @dev Fields: `owner` placed the order. `executor` is the one address besides the owner that
     /// the owner names for activating and filling it. `recipient` receives the ETH. `kind` is the
     /// kind of order. `status` is the stored status and is never `Expired`. `usdcAmount` is the
-    /// USDC budget of the whole order, in the token's smallest unit. `usdcRemaining` is the part
+    /// USDC budget of the whole order, in the token's smallest unit: for a `Dca` order, its amount
+    /// per period times its number of periods. `usdcRemaining` is the part
     /// of that budget not spent yet: `usdcAmount` when the order is placed, less the amount of
     /// each fill. `targetPrice` is the ETH price in USD, with the price feed's decimals, above
     /// which a fill is refused. `activationPrice` is zero for an order that is `Open` once placed;
@@ -116,7 +122,8 @@ contract LedgerTrigger is ReentrancyGuard {
     /// it, and it keeps its value after the activation. `fillsTotal` is how many fills the order
     /// takes in all, and `fillsDone` how many it has had. `createdAt` is the time of the block
     /// that placed the order. `expiry` is the last second, in Unix time, at which the order is
-    /// still valid.
+    /// still valid; for a `Dca` order it is worked out from the schedule: the last second of its
+    /// last period.
     struct Order {
         address owner;
         address executor;
@@ -142,14 +149,51 @@ contract LedgerTrigger is ReentrancyGuard {
         uint256 total;
     }
 
+    /// @notice The schedule of a time-scheduled (`Dca`) order. Period p, counting from 0, is the
+    /// seconds from `startAt + p * periodLength` to `startAt + (p + 1) * periodLength - 1`; the
+    /// current period is `(now - startAt) / periodLength`, rounded down.
+    /// @dev Fields: `startAt` is the time, in Unix seconds, at which period 0 begins.
+    /// `periodLength` is the length of one period, in seconds. `usdcPerPeriod` is the USDC one
+    /// fill spends, in the token's smallest unit. `filledThrough` is the first period that may
+    /// still be bought: zero at first, and p + 1 once period p has been bought, so a period that
+    /// was skipped can never be bought later. The number of periods is the order's `fillsTotal`.
+    struct DcaSchedule {
+        uint256 startAt;
+        uint256 periodLength;
+        uint256 usdcPerPeriod;
+        uint256 filledThrough;
+    }
+
+    /// @notice The inputs of `createDcaOrder`.
+    /// @dev Fields: `usdcPerPeriod` is the USDC bought in each period, in the token's smallest
+    /// unit. `targetPrice` is the ETH price in USD, with the price feed's decimals, above which no
+    /// period is bought. `periodLength` is the length of one period, in seconds. `periodCount` is
+    /// the number of periods. `startAt` is the time, in Unix seconds, at which period 0 begins, or
+    /// zero for the time of the block that places the order. `activationPrice` is zero for an
+    /// order that is `Open` once placed; otherwise the order is placed `Dormant`. `recipient`
+    /// receives the ETH, and `executor` is the address the owner names for activating and filling
+    /// the order.
+    struct DcaOrderParams {
+        uint256 usdcPerPeriod;
+        uint256 targetPrice;
+        uint256 periodLength;
+        uint256 periodCount;
+        uint256 startAt;
+        uint256 activationPrice;
+        address recipient;
+        address executor;
+    }
+
     /// @notice What the fill checks found for one order: the first reason it cannot be filled,
     /// and the values read on the way.
     /// @dev Fields: `blocker` is `None` when the order can be filled. `amount` is the USDC this
-    /// fill spends and `priceCap` the highest feed price at which it may go ahead; a `Limit`
-    /// order spends all of its `usdcRemaining`, with its `targetPrice` as the cap. `price` and
-    /// `updatedAt` are the feed's answer and update time. `allowance` and `balance` are the
-    /// owner's USDC allowance to this contract and USDC balance. A value is zero when the checks
-    /// stopped before working it out or reading it.
+    /// fill spends and `priceCap` the highest feed price at which it may go ahead: a `Limit`
+    /// order spends all of its `usdcRemaining` and a `Dca` order the `usdcPerPeriod` of its
+    /// schedule, both with the order's `targetPrice` as the cap. `price` and `updatedAt` are the
+    /// feed's answer and update time. `allowance` and `balance` are the owner's USDC allowance to
+    /// this contract and USDC balance. `period` is, for a `Dca` order, the current period,
+    /// counting from 0. A value is zero when the checks stopped before working it out or reading
+    /// it.
     struct FillCheck {
         FillBlocker blocker;
         uint256 amount;
@@ -158,6 +202,7 @@ contract LedgerTrigger is ReentrancyGuard {
         uint256 updatedAt;
         uint256 allowance;
         uint256 balance;
+        uint256 period;
     }
 
     /// @notice What the activation checks found for one order: the first reason it cannot be
@@ -186,8 +231,9 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @notice The swap venue that turns USDC into ETH. Set at deployment, never changes.
     /// @dev Anyone can read it; reading it never reverts.
     ISwapVenue public immutable swapVenue;
-    /// @notice Largest `usdcAmount` of one order, in the token's smallest unit. Set at
-    /// deployment, never changes.
+    /// @notice Largest amount of USDC one fill may spend, in the token's smallest unit: the whole
+    /// `usdcAmount` of a `Limit` order, the amount per period of a `Dca` order, whose whole budget
+    /// may be above it. Set at deployment, never changes.
     /// @dev Anyone can read it; reading it never reverts.
     uint256 public immutable maxOrderAmount;
     /// @notice Largest number of unfinished orders one owner can have at the same time. Set at
@@ -221,6 +267,8 @@ contract LedgerTrigger is ReentrancyGuard {
     mapping(address owner => OpenOrders open) private openOrdersOf;
     /// @notice ID of the newest order, or 0 before the first one.
     uint256 private lastOrderId;
+    /// @notice Order ID to schedule, for `Dca` orders only.
+    mapping(uint256 orderId => DcaSchedule schedule) private schedules;
 
     /// @notice An order was placed.
     /// @param orderId ID of the new order.
@@ -244,6 +292,21 @@ contract LedgerTrigger is ReentrancyGuard {
         uint256 expiry,
         OrderKind kind,
         uint256 activationPrice
+    );
+
+    /// @notice A time-scheduled (`Dca`) order was placed. Emitted right after its `OrderCreated`.
+    /// @param orderId ID of the new order.
+    /// @param startAt Time, in Unix seconds, at which period 0 begins: the time given, or the
+    /// time of the block that placed the order when zero was given.
+    /// @param periodLength Length of one period, in seconds.
+    /// @param periodCount Number of periods.
+    /// @param usdcPerPeriod USDC bought in each period, in the token's smallest unit.
+    event OrderScheduled(
+        uint256 indexed orderId,
+        uint256 indexed startAt,
+        uint256 indexed periodLength,
+        uint256 periodCount,
+        uint256 usdcPerPeriod
     );
 
     /// @notice A dormant order was activated: it is `Open` from now on.
@@ -301,20 +364,22 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @param orderId The order.
     /// @param status Its stored status.
     error OrderNotOpen(uint256 orderId, OrderStatus status);
-    /// @notice The order amount is zero.
+    /// @notice The order amount, or the amount per period of a `Dca` order, is zero.
     error ZeroAmount();
-    /// @notice The order amount is above `maxOrderAmount`.
-    /// @param amount The amount asked for.
+    /// @notice The order amount, or the amount per period of a `Dca` order, is above
+    /// `maxOrderAmount`.
+    /// @param amount The amount asked for: the order amount, or the amount per period.
     /// @param max The largest amount allowed.
     error AmountAboveMax(uint256 amount, uint256 max);
-    /// @notice The target price is zero.
+    /// @notice The target price, which for a `Dca` order is the cap of every period, is zero.
     error ZeroTargetPrice();
     /// @notice The recipient is the zero address.
     error ZeroRecipient();
     /// @notice The executor is the zero address.
     error ZeroExecutor();
     /// @notice The expiry is not after the current block's time.
-    /// @param expiry The expiry asked for.
+    /// @param expiry The expiry asked for, or for a `Dca` order the one worked out from its
+    /// schedule.
     /// @param currentTime The current block's time.
     error ExpiryNotInFuture(uint256 expiry, uint256 currentTime);
     /// @notice The caller already has `maxOpenOrdersPerOwner` unfinished orders.
@@ -337,16 +402,18 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @param updatedAt When the feed last updated the price.
     /// @param maxPriceAge The oldest price age allowed, in seconds.
     error StalePrice(uint256 updatedAt, uint256 maxPriceAge);
-    /// @notice The price feed's price is above the most this fill may pay, which for a `Limit`
-    /// order is its target price.
+    /// @notice The price feed's price is above the most this fill may pay: the order's target
+    /// price, which for a `Dca` order is the cap of every period.
     /// @param price The price the feed reported.
     /// @param targetPrice The most this fill may pay.
     error PriceAboveTarget(uint256 price, uint256 targetPrice);
-    /// @notice The owner's USDC allowance to this contract is below the amount of this fill.
+    /// @notice The owner's USDC allowance to this contract is below the amount of this fill, which
+    /// for a `Dca` order is its amount per period.
     /// @param allowance The allowance the owner has given.
     /// @param needed The amount of this fill.
     error InsufficientAllowance(uint256 allowance, uint256 needed);
-    /// @notice The owner's USDC balance is below the amount of this fill.
+    /// @notice The owner's USDC balance is below the amount of this fill, which for a `Dca` order
+    /// is its amount per period.
     /// @param balance The owner's balance.
     /// @param needed The amount of this fill.
     error InsufficientBalance(uint256 balance, uint256 needed);
@@ -400,6 +467,29 @@ contract LedgerTrigger is ReentrancyGuard {
     error ZeroMaxPeriodsPerOrder();
     /// @notice Deployment: `maxTiersPerOrder` is zero.
     error ZeroMaxTiersPerOrder();
+    /// @notice The period length of a `Dca` order is zero.
+    error ZeroPeriodLength();
+    /// @notice The number of periods of a `Dca` order is zero.
+    error ZeroPeriodCount();
+    /// @notice The number of periods of a `Dca` order is above `maxPeriodsPerOrder`.
+    /// @param periodCount The number of periods asked for.
+    /// @param maxPeriods The largest number of periods allowed.
+    error TooManyPeriods(uint256 periodCount, uint256 maxPeriods);
+    /// @notice The start time of a `Dca` order is not zero and is before the current block's time.
+    /// @param startAt The start time asked for.
+    /// @param currentTime The current block's time.
+    error StartInPast(uint256 startAt, uint256 currentTime);
+    /// @notice The first period of a `Dca` order has not begun yet.
+    /// @param orderId The order.
+    /// @param startAt The time at which its first period begins.
+    error NotStarted(uint256 orderId, uint256 startAt);
+    /// @notice The current period of a `Dca` order has been bought already.
+    /// @param orderId The order.
+    /// @param periodIndex The current period, counting from 0.
+    error PeriodAlreadyFilled(uint256 orderId, uint256 periodIndex);
+    /// @notice The order is not a `Dca` order, so it has no schedule.
+    /// @param orderId The order.
+    error NotADcaOrder(uint256 orderId);
 
     /// @notice Rejects an ID that no order has, with `OrderNotFound`.
     /// @param orderId The order.
@@ -473,7 +563,8 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @param usdc_ The USDC token (an ERC-20 token address).
     /// @param priceFeed_ The price feed for ETH in USD (a Chainlink-style feed address).
     /// @param swapVenue_ The swap venue (an `ISwapVenue` address).
-    /// @param maxOrderAmount_ Largest order amount, in the token's smallest unit (uint256).
+    /// @param maxOrderAmount_ Largest amount one fill may spend, in the token's smallest unit: the
+    /// amount of a `Limit` order, the amount per period of a `Dca` order (uint256).
     /// @param maxOpenOrdersPerOwner_ Largest number of unfinished orders per owner (uint256).
     /// @param maxPriceAge_ Oldest acceptable price age, in seconds (uint256).
     /// @param maxSlippageBps_ Allowed slippage, in basis points (uint256).
@@ -551,10 +642,12 @@ contract LedgerTrigger is ReentrancyGuard {
     ) external returns (uint256 orderId) {
         _requireValidAmountAndTarget(usdcAmount, targetPrice);
         _requireValidPartiesExpiryAndSlot(recipient, executor, expiry);
-        orderId = _placeLimitOrder(
+        orderId = _placeOrder(
+            OrderKind.Limit,
             usdcAmount,
             targetPrice,
             0,
+            1,
             recipient,
             executor,
             expiry
@@ -597,13 +690,77 @@ contract LedgerTrigger is ReentrancyGuard {
             revert ActivationNotAboveTarget(activationPrice, targetPrice);
         }
         _requireValidPartiesExpiryAndSlot(recipient, executor, expiry);
-        orderId = _placeLimitOrder(
+        orderId = _placeOrder(
+            OrderKind.Limit,
             usdcAmount,
             targetPrice,
             activationPrice,
+            1,
             recipient,
             executor,
             expiry
+        );
+    }
+
+    /// @notice Places a time-scheduled (`Dca`) order for the caller, who becomes its owner: from
+    /// `p.startAt` on, `p.usdcPerPeriod` can be spent once in each period of `p.periodLength`
+    /// seconds, for `p.periodCount` periods, each time at no more than `p.targetPrice`. A period
+    /// that passes without a fill is skipped for good. The order's budget is `p.usdcPerPeriod`
+    /// times `p.periodCount`, and its expiry, worked out here, is the last second of its last
+    /// period. Moves no tokens and no ETH, and needs no USDC allowance; each fill needs the
+    /// allowance to cover the amount of one period.
+    /// @dev Anyone can call it. Rejects, in this order: a zero `usdcPerPeriod` (`ZeroAmount`); a
+    /// `usdcPerPeriod` above `maxOrderAmount` (`AmountAboveMax`; the budget itself may be above
+    /// it); a zero `targetPrice` (`ZeroTargetPrice`); a zero `periodLength` (`ZeroPeriodLength`);
+    /// a zero `periodCount` (`ZeroPeriodCount`); a `periodCount` above `maxPeriodsPerOrder`
+    /// (`TooManyPeriods`); a `startAt` that is not zero and is before the current block's time
+    /// (`StartInPast`); a zero `recipient` (`ZeroRecipient`); a zero `executor` (`ZeroExecutor`);
+    /// an expiry not after the current block's time (`ExpiryNotInFuture`), which happens only for
+    /// one period of one second that starts in the current block; a caller who already has
+    /// `maxOpenOrdersPerOwner` unfinished orders, expired ones included (`TooManyOpenOrders`). A
+    /// `startAt` of zero stands for the time of the block that places the order, and that time is
+    /// stored. A product of the inputs that does not fit in 256 bits (the number of periods times
+    /// their length, or times the amount per period) makes the call revert with a panic. With an
+    /// `activationPrice` above zero the order is placed `Dormant` and must be activated before it
+    /// can be filled; that price may be at, below or above `targetPrice`. The order takes one of
+    /// the owner's slots and adds its whole budget to the owner's open total. The executor may be
+    /// the caller. Emits `OrderCreated`, then `OrderScheduled`.
+    /// @param p The order (a `DcaOrderParams` struct): `usdcPerPeriod`, USDC per period in the
+    /// token's smallest unit; `targetPrice`, ETH price in USD with the price feed's decimals, the
+    /// most any period may pay; `periodLength`, in seconds; `periodCount`; `startAt`, the Unix
+    /// time at which period 0 begins, or zero; `activationPrice`, zero or the price at or above
+    /// which the order can be activated; `recipient`; `executor`.
+    /// @return orderId ID of the new order, numbered with the orders of the other kinds
+    /// (uint256).
+    function createDcaOrder(
+        DcaOrderParams calldata p
+    ) external returns (uint256 orderId) {
+        _requireValidAmountAndTarget(p.usdcPerPeriod, p.targetPrice);
+        uint256 startAt = _requireValidSchedule(p);
+        uint256 expiry = startAt + p.periodCount * p.periodLength - 1;
+        _requireValidPartiesExpiryAndSlot(p.recipient, p.executor, expiry);
+        orderId = _placeOrder(
+            OrderKind.Dca,
+            p.usdcPerPeriod * p.periodCount,
+            p.targetPrice,
+            p.activationPrice,
+            p.periodCount,
+            p.recipient,
+            p.executor,
+            expiry
+        );
+        DcaSchedule storage schedule = schedules[orderId];
+        schedule.startAt = startAt;
+        schedule.periodLength = p.periodLength;
+        schedule.usdcPerPeriod = p.usdcPerPeriod;
+        // `filledThrough` starts at zero.
+
+        emit OrderScheduled(
+            orderId,
+            startAt,
+            p.periodLength,
+            p.periodCount,
+            p.usdcPerPeriod
         );
     }
 
@@ -646,7 +803,9 @@ contract LedgerTrigger is ReentrancyGuard {
 
     /// @notice Fills an open order: takes the USDC of this fill from the owner, swaps it for ETH at
     /// the swap venue and sends all of that ETH to the order's recipient. A `Limit` order is
-    /// filled once, for all of its `usdcRemaining`, at no more than its target price.
+    /// filled once, for all of its `usdcRemaining`, at no more than its target price. A `Dca`
+    /// order is filled at most once in each period of its schedule, for its amount per period, at
+    /// no more than its target price; a period that passes without a fill is skipped for good.
     /// @dev Only the order's owner or its executor can call it. It takes no address and no
     /// instruction from the caller: the token, the price feed and the swap venue are fixed at
     /// deployment, and the recipient is fixed in the order. Rejects, in this order: a call made
@@ -655,16 +814,20 @@ contract LedgerTrigger is ReentrancyGuard {
     /// (`NotOrderOwnerOrExecutor`); then the checks that `canFill` reports, each with its own
     /// error: stored status not `Open` or `PartiallyFilled` (`OrderNotOpen`, which names the
     /// stored status, `Dormant` for an order not activated yet), expiry passed (`OrderExpired`),
-    /// price zero or below or updated after the current block's time (`InvalidPrice`), price
-    /// older than `maxPriceAge` (`StalePrice`), price above the target price
-    /// (`PriceAboveTarget`), owner's allowance below the amount of this fill
+    /// for a `Dca` order its period 0 not begun yet (`NotStarted`) or its current period bought
+    /// already (`PeriodAlreadyFilled`), price zero or below or updated after the current block's
+    /// time (`InvalidPrice`), price older than `maxPriceAge` (`StalePrice`), price above the
+    /// target price (`PriceAboveTarget`), owner's allowance below the amount of this fill
     /// (`InsufficientAllowance`), owner's balance below the amount of this fill
-    /// (`InsufficientBalance`). A price exactly `maxPriceAge` old counts as fresh, and a price
-    /// equal to the target price can fill. Then it counts the fill and takes its amount off the
-    /// order's `usdcRemaining` and off the owner's open total; on the order's last fill it marks
-    /// the order `Filled` and takes it off the owner's open count, and on any earlier fill it
-    /// marks the order `PartiallyFilled`. Then it takes the amount from the owner, approves the
-    /// swap venue for that amount and swaps it with a minimum ETH output. It trusts its own balances, not the venue's return value:
+    /// (`InsufficientBalance`). The amount of this fill is the order's `usdcRemaining` for a
+    /// `Limit` order and its amount per period for a `Dca` order. A price exactly `maxPriceAge`
+    /// old counts as fresh, and a price equal to the target price can fill. Then it counts the
+    /// fill and takes its amount off the order's `usdcRemaining` and off the owner's open total;
+    /// for a `Dca` order it records the current period as bought, so the next fill can only come
+    /// in a later period; on the order's last fill it marks the order `Filled` and takes it off
+    /// the owner's open count, and on any earlier fill it marks the order `PartiallyFilled`. Then
+    /// it takes the amount from the owner, approves the swap venue for that amount and swaps it
+    /// with a minimum ETH output. It trusts its own balances, not the venue's return value:
     /// its USDC balance must be back to what it was before the USDC was taken
     /// (`SwapUsdcMismatch`), and its ETH balance must have gone up by at least the minimum
     /// (`InsufficientEthOut`). It then sets the venue's allowance back to zero, sends all of the
@@ -695,14 +858,14 @@ contract LedgerTrigger is ReentrancyGuard {
         // The modifiers have run, in this order: the reentrancy guard, step 0 (the order exists),
         // step 1 (the caller is the owner or the executor) and the stored status of step 2.
         Order storage order = orders[orderId];
-        // Steps 2 to 5: status, expiry, this fill's amount and price cap, price, allowance and
-        // balance.
+        // Steps 2 to 5: status, expiry, the period of a `Dca` order, this fill's amount and price
+        // cap, price, allowance and balance.
         FillCheck memory check = _requireFillable(orderId, order);
         uint256 amount = check.amount;
         uint256 price = uint256(check.price);
 
         // Step 6: count the fill and take it off the order and the owner's open orders.
-        _recordFill(order, amount);
+        _recordFill(orderId, order, check);
 
         // Step 7: take the amount of this fill from the owner.
         uint256 usdcBefore = usdc.balanceOf(address(this));
@@ -775,6 +938,22 @@ contract LedgerTrigger is ReentrancyGuard {
         return orders[orderId];
     }
 
+    /// @notice Returns the schedule of a `Dca` order: when its period 0 begins, how long a period
+    /// lasts, how much each period spends and the first period it may still buy.
+    /// @dev Anyone can call it, whatever the order's status: a filled, cancelled or expired `Dca`
+    /// order still has its schedule. Rejects, in this order: an ID that no order has
+    /// (`OrderNotFound`), ID 0 included; an order of another kind (`NotADcaOrder`).
+    /// @param orderId The order (uint256).
+    /// @return schedule The stored schedule (a `DcaSchedule` struct).
+    function getSchedule(
+        uint256 orderId
+    ) external view orderExists(orderId) returns (DcaSchedule memory schedule) {
+        if (orders[orderId].kind != OrderKind.Dca) {
+            revert NotADcaOrder(orderId);
+        }
+        return schedules[orderId];
+    }
+
     /// @notice Returns the status of an order as it stands now: `Expired` for an order stored as
     /// `Dormant`, `Open` or `PartiallyFilled` whose expiry is before the current block's time,
     /// otherwise the stored status. At the expiry second itself the order keeps its stored status.
@@ -798,7 +977,8 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @dev Anyone can call it. It does not look at the caller, so it says nothing about who may
     /// fill the order. Rejects an ID that no order has (`OrderNotFound`), ID 0 included. It runs
     /// the very checks that `fillOrder` runs after checking the caller, in the same order: stored
-    /// status, expiry, price, allowance, balance. It does not try the swap, so a fill it reports as
+    /// status, expiry, for a `Dca` order its period (not started, current period bought already),
+    /// price, allowance, balance. It does not try the swap, so a fill it reports as
     /// possible can fail at the swap venue or when sending the ETH. It also reverts if the price
     /// feed or the USDC token reverts when it reads them.
     /// @param orderId The order (uint256).
@@ -812,7 +992,7 @@ contract LedgerTrigger is ReentrancyGuard {
         orderExists(orderId)
         returns (bool fillable, FillBlocker reason)
     {
-        reason = _checkFill(orders[orderId]).blocker;
+        reason = _checkFill(orderId).blocker;
         fillable = reason == FillBlocker.None;
     }
 
@@ -896,21 +1076,49 @@ contract LedgerTrigger is ReentrancyGuard {
         }
     }
 
-    /// @notice Stores a new `Limit` order for the caller, filled once for its whole amount, adds
-    /// it to the caller's open count and total, and emits `OrderCreated`. The order is `Dormant`
+    /// @notice Checks the schedule of a new `Dca` order: rejects a zero period length
+    /// (`ZeroPeriodLength`), a zero number of periods (`ZeroPeriodCount`), more periods than
+    /// `maxPeriodsPerOrder` (`TooManyPeriods`) and a start time that is not zero and is before the
+    /// current block's time (`StartInPast`), in this order.
+    /// @param p The inputs of the order.
+    /// @return startAt The start time to store: the one given, or the current block's time when
+    /// zero was given.
+    function _requireValidSchedule(
+        DcaOrderParams calldata p
+    ) private view returns (uint256 startAt) {
+        if (p.periodLength == 0) revert ZeroPeriodLength();
+        if (p.periodCount == 0) revert ZeroPeriodCount();
+        if (p.periodCount > maxPeriodsPerOrder) {
+            revert TooManyPeriods(p.periodCount, maxPeriodsPerOrder);
+        }
+        startAt = p.startAt;
+        if (startAt == 0) return block.timestamp;
+        if (startAt < block.timestamp) {
+            revert StartInPast(startAt, block.timestamp);
+        }
+    }
+
+    /// @notice Stores a new order of `kind` for the caller, adds it to the caller's open count and
+    /// its budget to the caller's open total, and emits `OrderCreated`. The order is `Dormant`
     /// when `activationPrice` is above zero and `Open` otherwise. The inputs must have been
     /// checked already.
-    /// @param usdcAmount USDC to spend, in the token's smallest unit.
-    /// @param targetPrice ETH price in USD with the price feed's decimals.
+    /// @param kind The kind of order.
+    /// @param usdcAmount USDC budget of the whole order, in the token's smallest unit.
+    /// @param targetPrice ETH price in USD with the price feed's decimals: the most any fill of
+    /// the order may pay.
     /// @param activationPrice Zero, or the activation price of a dormant order.
+    /// @param fillsTotal How many fills the order takes: one for a `Limit` order, its number of
+    /// periods for a `Dca` order.
     /// @param recipient Address that receives the ETH.
     /// @param executor Address the owner names for filling the order.
     /// @param expiry Last second at which the order is valid.
     /// @return orderId ID of the new order.
-    function _placeLimitOrder(
+    function _placeOrder(
+        OrderKind kind,
         uint256 usdcAmount,
         uint256 targetPrice,
         uint256 activationPrice,
+        uint256 fillsTotal,
         address recipient,
         address executor,
         uint256 expiry
@@ -920,14 +1128,14 @@ contract LedgerTrigger is ReentrancyGuard {
         order.owner = msg.sender;
         order.executor = executor;
         order.recipient = recipient;
-        order.kind = OrderKind.Limit;
+        order.kind = kind;
         order.status =
             activationPrice == 0 ? OrderStatus.Open : OrderStatus.Dormant;
         order.usdcAmount = usdcAmount;
         order.usdcRemaining = usdcAmount;
         order.targetPrice = targetPrice;
         order.activationPrice = activationPrice;
-        order.fillsTotal = 1;
+        order.fillsTotal = fillsTotal;
         // `fillsDone` starts at zero.
         order.createdAt = block.timestamp;
         order.expiry = expiry;
@@ -935,28 +1143,48 @@ contract LedgerTrigger is ReentrancyGuard {
         ++open.count;
         open.total += usdcAmount;
 
+        _emitOrderCreated(orderId, order);
+    }
+
+    /// @notice Emits `OrderCreated` for an order just stored, with the values it was stored with.
+    /// Reading them back from storage keeps `_placeOrder` within the stack's reach.
+    /// @param orderId ID of the new order.
+    /// @param order The order.
+    function _emitOrderCreated(uint256 orderId, Order storage order) private {
         emit OrderCreated(
             orderId,
-            msg.sender,
-            executor,
-            recipient,
-            usdcAmount,
-            targetPrice,
-            expiry,
-            OrderKind.Limit,
-            activationPrice
+            order.owner,
+            order.executor,
+            order.recipient,
+            order.usdcAmount,
+            order.targetPrice,
+            order.expiry,
+            order.kind,
+            order.activationPrice
         );
     }
 
     /// @notice Step 6 of a fill: counts the fill and takes its amount off what the order has left
-    /// to spend. When this is the last of the order's fills, it marks the order `Filled` and takes
-    /// it off the owner's open count; otherwise it marks the order `PartiallyFilled` and the order
-    /// keeps its slot. Either way it takes the amount off the owner's open total.
+    /// to spend. For a `Dca` order it sets the schedule's `filledThrough`, in storage, to the
+    /// period after the current one. When this is the last of the order's fills, it marks the
+    /// order `Filled` and takes it off the owner's open count; otherwise it marks the order
+    /// `PartiallyFilled` and the order keeps its slot. Either way it takes the amount off the
+    /// owner's open total.
+    /// @param orderId The order's ID, for its schedule.
     /// @param order The order.
-    /// @param amount The USDC this fill spends.
-    function _recordFill(Order storage order, uint256 amount) private {
+    /// @param check What the fill checks found: the amount of this fill and, for a `Dca` order,
+    /// the current period.
+    function _recordFill(
+        uint256 orderId,
+        Order storage order,
+        FillCheck memory check
+    ) private {
+        uint256 amount = check.amount;
         uint256 fillsDone = ++order.fillsDone;
         order.usdcRemaining -= amount;
+        if (order.kind == OrderKind.Dca) {
+            schedules[orderId].filledThrough = check.period + 1;
+        }
         OpenOrders storage open = openOrdersOf[order.owner];
         if (fillsDone == order.fillsTotal) {
             order.status = OrderStatus.Filled;
@@ -992,20 +1220,51 @@ contract LedgerTrigger is ReentrancyGuard {
 
     /// @notice Runs the fill checks on an order in a fixed order and stops at the first that
     /// fails: stored status (`NotOpen` for a finished order, `Dormant` for one not activated),
-    /// expiry, then, with the amount and the price cap of this fill worked out, price (above zero
-    /// and not updated in the future, then not older than `maxPriceAge`, then not above the price
-    /// cap), allowance, balance. Both `canFill` and `fillOrder` use it, so they always agree.
-    /// @param order The order.
+    /// expiry, for a `Dca` order its period (period 0 begun, current period not bought yet), then,
+    /// with the amount and the price cap of this fill worked out, price (above zero and not
+    /// updated in the future, then not older than `maxPriceAge`, then not above the price cap),
+    /// allowance, balance. Both `canFill` and `fillOrder` use it, so they always agree.
+    /// @param orderId The order.
     /// @return check The first reason found, or `None`, and the values read on the way.
     function _checkFill(
-        Order storage order
+        uint256 orderId
     ) private view returns (FillCheck memory check) {
+        Order storage order = orders[orderId];
         check.blocker = _checkStatusAndExpiry(order);
         if (check.blocker != FillBlocker.None) return check;
-        // A `Limit` order spends all it has left, at no more than its target price.
-        check.amount = order.usdcRemaining;
+        if (order.kind == OrderKind.Dca) {
+            // A `Dca` order spends the amount of one period, once in each period.
+            _checkPeriod(schedules[orderId], check);
+            if (check.blocker != FillBlocker.None) return check;
+        } else {
+            // A `Limit` order spends all it has left.
+            check.amount = order.usdcRemaining;
+        }
+        // Either way, this fill pays no more than the order's target price.
         check.priceCap = order.targetPrice;
         _checkPriceAndFunds(order.owner, check);
+    }
+
+    /// @notice The fill checks of a `Dca` order's schedule: period 0 has begun, then the current
+    /// period has not been bought yet. Records in `check` the first reason found, the current
+    /// period and, when both pass, the amount of this fill: the amount per period.
+    /// @param schedule The order's schedule.
+    /// @param check What the checks found so far; updated in place.
+    function _checkPeriod(
+        DcaSchedule storage schedule,
+        FillCheck memory check
+    ) private view {
+        uint256 startAt = schedule.startAt;
+        if (block.timestamp < startAt) {
+            check.blocker = FillBlocker.NotStarted;
+            return;
+        }
+        check.period = (block.timestamp - startAt) / schedule.periodLength;
+        if (check.period < schedule.filledThrough) {
+            check.blocker = FillBlocker.PeriodAlreadyFilled;
+            return;
+        }
+        check.amount = schedule.usdcPerPeriod;
     }
 
     /// @notice The first two fill checks: stored status (`NotOpen` for a finished order, `Dormant`
@@ -1062,20 +1321,26 @@ contract LedgerTrigger is ReentrancyGuard {
 
     /// @notice Runs the fill checks and reverts with the error that matches the first reason
     /// found. A finished order and a dormant one both get `OrderNotOpen` with the stored status.
-    /// @param orderId The order's ID, for the errors.
+    /// @param orderId The order's ID, for the checks and the errors.
     /// @param order The order.
     /// @return check What the checks found, when every check passes.
     function _requireFillable(
         uint256 orderId,
         Order storage order
     ) private view returns (FillCheck memory check) {
-        check = _checkFill(order);
+        check = _checkFill(orderId);
         FillBlocker blocker = check.blocker;
         if (blocker == FillBlocker.NotOpen || blocker == FillBlocker.Dormant) {
             revert OrderNotOpen(orderId, order.status);
         }
         if (blocker == FillBlocker.Expired) {
             revert OrderExpired(orderId, order.expiry);
+        }
+        if (blocker == FillBlocker.NotStarted) {
+            revert NotStarted(orderId, schedules[orderId].startAt);
+        }
+        if (blocker == FillBlocker.PeriodAlreadyFilled) {
+            revert PeriodAlreadyFilled(orderId, check.period);
         }
         if (blocker == FillBlocker.InvalidPrice) {
             revert InvalidPrice(check.price);
