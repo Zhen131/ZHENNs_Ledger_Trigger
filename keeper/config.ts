@@ -20,6 +20,7 @@ export const ENV = {
   maxFeeWei: "KEEPER_MAX_FEE_WEI",
   intervalSeconds: "KEEPER_INTERVAL_SECONDS",
   maxBlockRange: "KEEPER_MAX_BLOCK_RANGE",
+  maxFillsPerOrderPerRound: "KEEPER_MAX_FILLS_PER_ORDER_PER_ROUND",
 } as const;
 
 /** The variables that must be set; none of them has a default. */
@@ -31,7 +32,7 @@ export const REQUIRED = [
   ENV.maxFeeWei,
 ] as const;
 
-/** Defaults of the two optional settings. */
+/** Defaults of the three optional settings. */
 export const DEFAULTS = {
   /** Seconds to wait between two rounds when the keeper keeps running. */
   intervalSeconds: 30,
@@ -40,6 +41,14 @@ export const DEFAULTS = {
    * block span of one such request, so the keeper reads in pieces.
    */
   maxBlockRange: 500n,
+  /**
+   * Most fills of one order in one round. An order with several fills, such
+   * as a Ladder order whose price fell through several tiers at once, is
+   * filled again and again in the same round until it cannot be filled now or
+   * this many fills are done. It also stops a round from filling one order
+   * forever.
+   */
+  maxFillsPerOrderPerRound: 5,
 } as const;
 
 export type KeeperConfig = {
@@ -51,12 +60,17 @@ export type KeeperConfig = {
   readonly contractAddress: Address;
   /** First block to read `OrderCreated` events from. */
   readonly fromBlock: bigint;
-  /** Largest fee, in wei, the keeper may pay for one fill transaction. */
+  /**
+   * Largest fee, in wei, the keeper may pay for one transaction: one fill or
+   * one activation.
+   */
   readonly maxFeeWei: bigint;
   /** Seconds to wait between two rounds. */
   readonly intervalSeconds: number;
   /** Most blocks read in one event-log request. */
   readonly maxBlockRange: bigint;
+  /** Most fills of one order in one round. */
+  readonly maxFillsPerOrderPerRound: number;
 };
 
 /** What is wrong with one variable. */
@@ -157,6 +171,20 @@ export function readConfig(env: Environment): ConfigResult {
       intervalSeconds = Number(interval);
     }
   }
+  const maxFills = readWhole(
+    value(ENV.maxFillsPerOrderPerRound),
+    ENV.maxFillsPerOrderPerRound,
+    1n,
+    invalid,
+  );
+  let maxFillsPerOrderPerRound: number = DEFAULTS.maxFillsPerOrderPerRound;
+  if (maxFills !== undefined) {
+    if (maxFills > BigInt(Number.MAX_SAFE_INTEGER)) {
+      invalid(ENV.maxFillsPerOrderPerRound, "is too large");
+    } else {
+      maxFillsPerOrderPerRound = Number(maxFills);
+    }
+  }
 
   if (
     problems.length > 0 ||
@@ -178,6 +206,7 @@ export function readConfig(env: Environment): ConfigResult {
       maxFeeWei,
       intervalSeconds,
       maxBlockRange: maxBlockRange ?? DEFAULTS.maxBlockRange,
+      maxFillsPerOrderPerRound,
     },
     intervalSeconds,
   };
