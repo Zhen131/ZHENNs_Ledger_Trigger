@@ -2,8 +2,8 @@
 //
 // Usage: node scripts/scenarios.ts [--list] [--matrix <file>] [directory]
 //
-// The order contract's specification lists 36 test scenarios, numbered S01 to
-// S36. This check passes only when each of them has at least one test whose
+// The order contract's specification lists 49 test scenarios, numbered S01 to
+// S49. This check passes only when each of them has at least one test whose
 // own title starts with its number, for example
 // it("S07 a second fill of the same order is rejected", ...). Only the title of
 // the test itself counts, not the titles of the groups (describe) around it.
@@ -45,9 +45,9 @@ const ROOT = path.join(import.meta.dirname, "..");
 const MATRIX = path.join(ROOT, "docs", "test-matrix.md");
 
 /** How many scenarios the specification lists. */
-export const SCENARIO_COUNT = 36;
+export const SCENARIO_COUNT = 49;
 
-/** The scenario numbers, S01 to S36. */
+/** The scenario numbers, S01 to S49. */
 export const SCENARIOS: readonly string[] = Array.from(
   { length: SCENARIO_COUNT },
   (_, index) => `S${String(index + 1).padStart(2, "0")}`,

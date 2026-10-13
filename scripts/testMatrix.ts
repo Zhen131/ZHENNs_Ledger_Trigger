@@ -6,7 +6,7 @@
 //
 // - A table whose first header cell is "ID" is the scenario table. There is
 //   exactly one, and it has exactly one row for each scenario number, S01 to
-//   S36, with the number alone in its first cell.
+//   S49, with the number alone in its first cell.
 // - Every table with the header cells "Test file" and "Test title" names tests.
 //   In each of its rows, the title cell holds one or more titles and the file
 //   cell one or more files, each in code font and separated by <br>. The file
@@ -113,7 +113,7 @@ function startsWithNumber(title: string, scenario: string): boolean {
 /**
  * The problems found in the test matrix `markdown`, compared with `tests`,
  * every test in the source that is not skipped. `scenarios` lists the
- * scenario numbers, S01 to S36. An empty list means the matrix is right.
+ * scenario numbers, S01 to S49. An empty list means the matrix is right.
  */
 export function checkTestMatrix(
   markdown: string,

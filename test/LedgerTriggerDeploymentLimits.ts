@@ -64,15 +64,20 @@ describe("LedgerTrigger deployment: the period and tier limits", () => {
   });
 
   it("stores all nine parameters exactly as given, none of them a default", async () => {
-    const { viem, usdc, feed, deployTrigger } = await deployLedgerTrigger();
+    const { viem, deployTrigger } = await deployLedgerTrigger();
+    const otherUsdc = await viem.deployContract("MockUSDC");
+    const otherFeed = await viem.deployContract("MockPriceFeed", [
+      8,
+      1_999n * 10n ** 8n,
+    ]);
     const otherVenue = await viem.deployContract("MockSwapVenue", [
-      usdc.address,
-      feed.address,
+      otherUsdc.address,
+      otherFeed.address,
       25n,
     ]);
     const given = {
-      usdc: getAddress(usdc.address),
-      priceFeed: getAddress(feed.address),
+      usdc: getAddress(otherUsdc.address),
+      priceFeed: getAddress(otherFeed.address),
       swapVenue: getAddress(otherVenue.address),
       maxOrderAmount: 77n * ONE_USDC + 1n,
       maxOpenOrdersPerOwner: 9n,

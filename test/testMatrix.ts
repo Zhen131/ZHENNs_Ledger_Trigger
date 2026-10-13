@@ -101,7 +101,7 @@ describe("test matrix check: what it accepts and what it reports", () => {
   });
 
   it("reports a row whose first cell is not a scenario number", () => {
-    const extra = row(number(37), "test/a.ts", [`${number(37)} sample`]);
+    const extra = row(number(50), "test/a.ts", [`${number(50)} sample`]);
     assertProblem(
       problemsOf(matrix(ALL, extra), ALL),
       "is not a scenario number",
