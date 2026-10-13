@@ -13,7 +13,7 @@ Read this first:
 
 1. **Two new wallets that hold only test coins.** Create them in your wallet app just for this. Never use a wallet that holds real money.
    - **Wallet A, the owner.** It deploys the contracts, places the orders and pays for them. It needs Sepolia test ETH (for fees and for stocking the swap venue) and Sepolia test USDC.
-   - **Wallet B, the keeper.** The keeper fills orders from it. It needs Sepolia test ETH only, for fees.
+   - **Wallet B, the keeper.** The keeper activates and fills orders from it. It needs Sepolia test ETH only, for fees.
    - You need the private key of each wallet. Your wallet app can show it (it is 64 hex digits, sometimes with `0x` in front).
 2. **Test coins.**
    - Test ETH for both wallets: use a Sepolia faucet, for example the one your node service offers.
@@ -66,7 +66,7 @@ No script in this repository prints a private key or the node URL.
 
 ## 3. Deploy
 
-The external-parts deployment uses the real Sepolia USDC and price feed. It deploys two contracts: a mock swap venue and LedgerTrigger. (The other deployment, `deploy:mocks`, runs on Hardhat's local chain only and refuses Sepolia.) **[Not run on Sepolia]**
+The external-parts deployment uses the real Sepolia USDC and price feed. It deploys three contracts: a mock swap venue, the receipt contract FillReceipt, and LedgerTrigger, bound to that receipt contract. (The other deployment, `deploy:mocks`, runs on Hardhat's local chain only and refuses Sepolia.) **[Not run on Sepolia]**
 
 1. In a new terminal, go to the repository and set the two secrets for Hardhat (step 2).
 2. Set the two addresses from step 1.4, and the confirmation sentence. The scripts refuse to send anything to a chain other than Hardhat's local chain unless `TRIGGER_CONFIRM_PUBLIC_NETWORK` holds exactly this sentence:
@@ -79,13 +79,15 @@ The external-parts deployment uses the real Sepolia USDC and price feed. It depl
 
 3. Optional: change the deployment parameters. Each has a default:
 
-   | Variable                        | Meaning                                                   | Unit                                  | Default             |
-   | ------------------------------- | --------------------------------------------------------- | ------------------------------------- | ------------------- |
-   | `TRIGGER_MAX_ORDER_USDC`        | Largest order (`maxOrderAmount`)                          | USDC, as you write it (`500`, `12.5`) | `500`               |
-   | `TRIGGER_MAX_OPEN_ORDERS`       | Open orders one wallet may have (`maxOpenOrdersPerOwner`) | whole number of orders                | `5`                 |
-   | `TRIGGER_MAX_PRICE_AGE_SECONDS` | Oldest price that still counts (`maxPriceAge`)            | seconds                               | `4500` (75 minutes) |
-   | `TRIGGER_MAX_SLIPPAGE_BPS`      | Allowed price slippage (`maxSlippageBps`)                 | basis points (100 = 1 %)              | `100`               |
-   | `TRIGGER_VENUE_FEE_BPS`         | Fee of the mock swap venue                                | basis points                          | `0`                 |
+   | Variable                        | Meaning                                                                                                                        | Unit                                  | Default             |
+   | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------- | ------------------- |
+   | `TRIGGER_MAX_ORDER_USDC`        | Largest amount of one fill (`maxOrderAmount`): all of a limit order, one period of a `Dca` order, one tier of a `Ladder` order | USDC, as you write it (`500`, `12.5`) | `500`               |
+   | `TRIGGER_MAX_OPEN_ORDERS`       | Unfinished orders one wallet may have (`maxOpenOrdersPerOwner`)                                                                | whole number of orders                | `5`                 |
+   | `TRIGGER_MAX_PRICE_AGE_SECONDS` | Oldest price that still counts (`maxPriceAge`)                                                                                 | seconds                               | `4500` (75 minutes) |
+   | `TRIGGER_MAX_SLIPPAGE_BPS`      | Allowed price slippage (`maxSlippageBps`)                                                                                      | basis points (100 = 1 %)              | `100`               |
+   | `TRIGGER_MAX_PERIODS_PER_ORDER` | Most periods of one `Dca` order (`maxPeriodsPerOrder`)                                                                         | whole number of periods               | `52`                |
+   | `TRIGGER_MAX_TIERS_PER_ORDER`   | Most tiers of one `Ladder` order (`maxTiersPerOrder`)                                                                          | whole number of tiers                 | `5`                 |
+   | `TRIGGER_VENUE_FEE_BPS`         | Fee of the mock swap venue                                                                                                     | basis points                          | `0`                 |
 
    The script turns the USDC amount into the token's smallest unit with the decimals it reads from the token.
 
@@ -95,7 +97,7 @@ The external-parts deployment uses the real Sepolia USDC and price feed. It depl
    npm run deploy:external -- --network sepolia
    ```
 
-You should see, first, the check of the two addresses (nothing has been sent yet): the USDC token with 6 decimals, and the price feed with 8 decimals and its latest price in USD. Then the addresses of the swap venue and LedgerTrigger, the seven parameters read back from the chain with their units, and a line like `LedgerTrigger was deployed in block 1234567: use it as KEEPER_FROM_BLOCK`. **Write down the LedgerTrigger address and that block number.**
+You should see, first, the check of the two addresses (nothing has been sent yet): the USDC token with 6 decimals, and the price feed with 8 decimals and its latest price in USD. Then the addresses of the swap venue, FillReceipt and LedgerTrigger, the ten parameters read back from the chain with their units, the line `FillReceipt, read back from the chain, is bound to 0x...: this LedgerTrigger, the only address that can issue its receipts.`, and a line like `LedgerTrigger was deployed in block 1234567: use it as KEEPER_FROM_BLOCK`. **Write down the LedgerTrigger address and that block number.**
 
 If an address is wrong (for example a mainnet address), the script stops before sending anything and names the variable and the address.
 
@@ -117,7 +119,7 @@ npm run fund-venue -- --network sepolia
 
 ## 5. Approve and place an order
 
-The script first checks the order without sending anything: if the contract would reject it (for example it is above the largest order, or wallet A already has 5 open orders), it stops with the contract's error name and sends nothing. Otherwise it sets wallet A's USDC allowance for LedgerTrigger to what all of A's open orders add up to (`openOrderTotal`), then places the order. **[Not run on Sepolia]**
+The script first checks the order without sending anything: if the contract would reject it (for example its amount is above the largest amount of one fill, or wallet A already has 5 unfinished orders), it stops with the contract's error name and sends nothing. Otherwise it sets wallet A's USDC allowance for LedgerTrigger to what all of A's open orders add up to (`openOrderTotal`), then places the order. **[Not run on Sepolia]**
 
 The price on Sepolia moves by itself; nobody can set it. So:
 
@@ -154,7 +156,7 @@ export TRIGGER_ORDER_ID=<the order number place-order printed>
 npm run order-status -- --network sepolia
 ```
 
-You should see the order's fields, `status now` (`Open`, `Filled`, `Cancelled` or `Expired`), and `can fill now` with a reason: `None` when it can be filled, otherwise for example `PriceAboveTarget`, `InsufficientAllowance` or `InsufficientBalance`. This script sends nothing.
+You should see the order's fields, among them `kind` (`Limit` for an order placed with `place-order`), `remaining` (the USDC it has left to spend) and `fills done` (`0 of 1` before the fill); `stored status` and `status now` (`Open`, `Filled`, `Cancelled` or `Expired`); `can fill now` with a reason: `None` when it can be filled, otherwise for example `PriceAboveTarget`, `InsufficientAllowance` or `InsufficientBalance`; and `feed price`, the price feed's latest price. This script sends nothing.
 
 To cancel an order (only wallet A, its owner, can):
 
@@ -166,7 +168,7 @@ It cancels the order in `TRIGGER_ORDER_ID`. You should see `Order <number>: Open
 
 ## 7. Run the keeper against Sepolia
 
-The keeper fills the orders whose executor is wallet B, once they can be filled. Run it on your computer, in a second terminal. **[Not run on Sepolia]**
+The keeper activates and fills the orders whose executor is wallet B, once they can be activated or filled. Run it on your computer, in a second terminal. **[Not run on Sepolia]**
 
 1. Open a new terminal and go to the repository.
 2. Set its two secrets without showing them and without saving them in the history:
@@ -189,7 +191,7 @@ The keeper fills the orders whose executor is wallet B, once they can be filled.
 
    - `KEEPER_FROM_BLOCK`: the block LedgerTrigger was deployed in, as the deploy step printed. Earlier blocks cannot hold its orders.
    - `KEEPER_MAX_BLOCK_RANGE`: how many blocks the keeper reads in one request. The default is 500, but many free node plans allow only 10 blocks per request. A new block comes about every 12 seconds, so by the time you get here more than 10 blocks have passed since the deployment. With a free plan, set 10 as above. On a paid plan you can leave it out.
-   - `KEEPER_MAX_FEE_WEI`: the most the keeper may pay for one fill, in wei (1 ETH = 10^18 wei). A fill used about 150,000 to 165,000 gas on the local chain. `5000000000000000` is 0.005 ETH, enough up to a gas price of about 30 gwei. When a fill would cost more, the keeper does not send it and logs a line like `action=skip reason=fee-above-cap estimated-fee-wei=... cap-wei=...`. Then wait for cheaper gas, or raise the cap.
+   - `KEEPER_MAX_FEE_WEI`: the most the keeper may pay for one transaction, a fill or an activation, in wei (1 ETH = 10^18 wei). The keeper compares it with its own estimate of the gas a transaction needs, times the highest gas price it would send it with, not with the gas the transaction uses up in the end. On a fresh local chain, before any fill, that estimate came to about 452,000 gas for the first fill of a `Dca` order, the largest of the three kinds, and about 48,000 for an activation. `5000000000000000` is 0.005 ETH, enough for such a fill up to a gas price of about 11 gwei. When a fill or an activation would cost more, the keeper does not send it and logs a line like `action=skip reason=fee-above-cap estimated-fee-wei=... cap-wei=...`. Then wait for cheaper gas, or raise the cap.
 
 4. Run one round, then exit:
 
@@ -238,7 +240,7 @@ A call the contract would reject at that moment (for example a fill while the pr
 | `... set TRIGGER_CONFIRM_PUBLIC_NETWORK to the exact sentence ...`                            | Set the confirmation sentence exactly as in step 3.                                                                                                                                                                              |
 | `TRIGGER_USDC_ADDRESS (0x...) holds no contract code on chain 11155111`                       | That address is not deployed on Sepolia. Copy it again from Circle's page (the same goes for the price feed).                                                                                                                    |
 | `The contract rejected the call with ExpiryNotInFuture(...)`                                  | `TRIGGER_EXPIRY_MINUTES` is too small. Use a larger number.                                                                                                                                                                      |
-| `The contract rejected the call with AmountAboveMax(...)`                                     | The order is above the largest order set at deployment.                                                                                                                                                                          |
+| `The contract rejected the call with AmountAboveMax(...)`                                     | The order's amount is above the largest amount of one fill set at deployment (`maxOrderAmount`).                                                                                                                                 |
 | `order-status` says `InsufficientBalance`                                                     | Wallet A holds less USDC than the order. Get more from Circle's faucet.                                                                                                                                                          |
 | `order-status` says `StalePrice`                                                              | The feed has not updated for longer than `maxPriceAge`. Wait for its next update.                                                                                                                                                |
 | Keeper: `action=skip reason=InsufficientEthReserve`                                           | The swap venue holds less ETH than the order buys. Do step 4 again.                                                                                                                                                              |
