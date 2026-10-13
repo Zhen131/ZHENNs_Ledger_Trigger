@@ -19,6 +19,12 @@
 // anywhere else: LedgerTrigger would then get another address and refuse to
 // deploy.
 //
+// The deploying account is the wallet of the clients every transaction here is
+// sent with (`client.wallet`, see clients.ts). The address LedgerTrigger will
+// get, the ETH for the swap venue, the mock USDC, and the account and balance
+// in the report all come from that one wallet, so the account the address is
+// worked out from is always the account that sends.
+//
 // Both modes pass the send gate first. Afterwards they read LedgerTrigger's
 // ten parameters back from the chain, and the address FillReceipt is bound to,
 // and report them, together with every address and the block LedgerTrigger
@@ -156,6 +162,20 @@ export function externalAddressesFrom(env: Environment) {
   };
 }
 
+type ScriptClient = Awaited<ReturnType<typeof scriptClients>>["client"];
+
+/**
+ * The deploying account: the wallet in `client`, which sends every deployment
+ * and transaction here. Throws when the network gives no account.
+ */
+function deployingWallet(client: ScriptClient) {
+  const { wallet } = client;
+  if (wallet === undefined) {
+    throw new ScriptError("The network has no account to deploy from.");
+  }
+  return wallet;
+}
+
 /** What a USDC token and a price feed reported when checked. */
 export type PartsCheck = {
   readonly usdcDecimals: number;
@@ -276,11 +296,8 @@ async function deployVenueAndTrigger(
   usdcDecimals: number,
   settings: DeploySettings,
 ) {
-  const { publicClient, walletClients, client } = await scriptClients(viem);
-  const [deployer] = walletClients;
-  if (deployer === undefined) {
-    throw new ScriptError("The network has no account to deploy from.");
-  }
+  const { publicClient, client } = await scriptClients(viem);
+  const deployer = deployingWallet(client);
   const maxOrderAmount = parseDecimal(
     settings.maxOrderUsdc,
     usdcDecimals,
@@ -388,16 +405,13 @@ export async function deployWithMocks(input: {
   readonly mocks: MockSettings;
 }): Promise<DeploymentReport> {
   const { viem, settings, mocks } = input;
-  const { publicClient, walletClients, client } = await scriptClients(viem);
+  const { publicClient, client } = await scriptClients(viem);
   const chainId = await openSendGate(
     publicClient,
     GatedScript.DeployMocks,
     input.confirmation,
   );
-  const [deployer] = walletClients;
-  if (deployer === undefined) {
-    throw new ScriptError("The network has no account to deploy from.");
-  }
+  const deployer = deployingWallet(client);
   const firstPrice = parseDecimal(
     mocks.mockPriceUsd,
     MOCK_FEED_DECIMALS,
@@ -483,16 +497,13 @@ export async function deployWithExternalParts(input: {
   readonly onChecked?: (check: PartsCheck) => void;
 }): Promise<{ readonly check: PartsCheck; readonly report: DeploymentReport }> {
   const { viem, settings } = input;
-  const { publicClient, walletClients } = await scriptClients(viem);
+  const { publicClient, client } = await scriptClients(viem);
   const chainId = await openSendGate(
     publicClient,
     GatedScript.Deploy,
     input.confirmation,
   );
-  const [deployer] = walletClients;
-  if (deployer === undefined) {
-    throw new ScriptError("The network has no account to deploy from.");
-  }
+  const deployer = deployingWallet(client);
   const check = await checkExternalParts(viem, input.usdc, input.priceFeed);
   input.onChecked?.(check);
   // Converting the limit first means a bad amount stops the run before any
