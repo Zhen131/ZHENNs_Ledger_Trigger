@@ -17,6 +17,10 @@ import {ISwapVenue} from "./interfaces/ISwapVenue.sol";
 /// Placing and cancelling an order move no tokens and no ETH. Once the price feed reports a price
 /// at or below the target, the owner or the executor can fill the order: only then is the USDC
 /// taken from the owner, swapped for ETH at the swap venue and the ETH sent to the recipient.
+/// An order can also be placed dormant, with an activation price above its target price: it
+/// cannot be filled until the price feed reports a price at or above the activation price and
+/// the owner or the executor activates it. Activating moves no tokens and no ETH either; from
+/// then on the order is open and waits for the price to fall back to its target.
 /// @dev There is no admin: no pause, no upgrade, no setter and no withdrawal. The nine deployment
 /// parameters can never change. The status `Expired` is never stored; `statusOf` works it out from
 /// the expiry. A fill keeps none of the USDC and ETH it moves: it passes all of both straight
@@ -84,7 +88,7 @@ contract LedgerTrigger is ReentrancyGuard {
         InsufficientBalance
     }
 
-    /// @notice Why a dormant order cannot be activated right now.
+    /// @notice Why a dormant order cannot be activated right now, as reported by `canActivate`.
     /// @dev `None`: nothing stops it. `NotDormant`: its stored status is not `Dormant`. `Expired`:
     /// its expiry has passed. `InvalidPrice`: the feed's price is zero or below, or its update
     /// time is after the current block's time. `StalePrice`: the price is older than
@@ -102,15 +106,17 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @notice One order. Orders are never deleted, and their owner, executor and recipient never
     /// change.
     /// @dev Fields: `owner` placed the order. `executor` is the one address besides the owner that
-    /// the owner names for filling it. `recipient` receives the ETH. `kind` is the kind of order.
-    /// `status` is the stored status and is never `Expired`. `usdcAmount` is the USDC budget of
-    /// the whole order, in the token's smallest unit. `usdcRemaining` is the part of that budget
-    /// not spent yet: `usdcAmount` when the order is placed, less the amount of each fill.
-    /// `targetPrice` is the ETH price in USD, with the price feed's decimals, above which a fill
-    /// is refused. `activationPrice` is zero for an order that is `Open` once placed; otherwise
-    /// the order is placed `Dormant`. `fillsTotal` is how many fills the order takes in all, and
-    /// `fillsDone` how many it has had. `createdAt` is the time of the block that placed the
-    /// order. `expiry` is the last second, in Unix time, at which the order is still valid.
+    /// the owner names for activating and filling it. `recipient` receives the ETH. `kind` is the
+    /// kind of order. `status` is the stored status and is never `Expired`. `usdcAmount` is the
+    /// USDC budget of the whole order, in the token's smallest unit. `usdcRemaining` is the part
+    /// of that budget not spent yet: `usdcAmount` when the order is placed, less the amount of
+    /// each fill. `targetPrice` is the ETH price in USD, with the price feed's decimals, above
+    /// which a fill is refused. `activationPrice` is zero for an order that is `Open` once placed;
+    /// otherwise the order is placed `Dormant` and can be activated once the price is at or above
+    /// it, and it keeps its value after the activation. `fillsTotal` is how many fills the order
+    /// takes in all, and `fillsDone` how many it has had. `createdAt` is the time of the block
+    /// that placed the order. `expiry` is the last second, in Unix time, at which the order is
+    /// still valid.
     struct Order {
         address owner;
         address executor;
@@ -152,6 +158,16 @@ contract LedgerTrigger is ReentrancyGuard {
         uint256 updatedAt;
         uint256 allowance;
         uint256 balance;
+    }
+
+    /// @notice What the activation checks found for one order: the first reason it cannot be
+    /// activated, and the values read on the way.
+    /// @dev Fields: `blocker` is `None` when the order can be activated. `price` and `updatedAt`
+    /// are the feed's answer and update time, zero when the checks stopped before reading them.
+    struct ActivationCheck {
+        ActivationBlocker blocker;
+        int256 price;
+        uint256 updatedAt;
     }
 
     /// @notice Basis points in 100 %.
@@ -216,7 +232,8 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @param expiry Last second at which the order is valid.
     /// @param kind The kind of order.
     /// @param activationPrice Zero for an order placed `Open`; otherwise the order was placed
-    /// `Dormant`.
+    /// `Dormant`, and this is the price, with the price feed's decimals, at or above which it can
+    /// be activated.
     event OrderCreated(
         uint256 indexed orderId,
         address indexed owner,
@@ -227,6 +244,16 @@ contract LedgerTrigger is ReentrancyGuard {
         uint256 expiry,
         OrderKind kind,
         uint256 activationPrice
+    );
+
+    /// @notice A dormant order was activated: it is `Open` from now on.
+    /// @param orderId ID of the order.
+    /// @param activatedBy The account that activated it: the owner or the order's executor.
+    /// @param price The price feed's price at activation, with the feed's decimals.
+    event OrderActivated(
+        uint256 indexed orderId,
+        address indexed activatedBy,
+        uint256 indexed price
     );
 
     /// @notice An order was cancelled by its owner.
@@ -354,6 +381,21 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @notice Deployment: `maxSlippageBps` is 100 % (10000) or more.
     /// @param maxSlippageBps The rejected value, in basis points.
     error SlippageTooHigh(uint256 maxSlippageBps);
+    /// @notice The order's stored status is not `Dormant`, so it cannot be activated.
+    /// @param orderId The order.
+    /// @param status Its stored status.
+    error OrderNotDormant(uint256 orderId, OrderStatus status);
+    /// @notice The price feed's price is below the order's activation price.
+    /// @param price The price the feed reported.
+    /// @param activationPrice The order's activation price.
+    error PriceBelowActivation(uint256 price, uint256 activationPrice);
+    /// @notice The activation price of a dormant order is not above its target price.
+    /// @param activationPrice The activation price asked for.
+    /// @param targetPrice The target price asked for.
+    error ActivationNotAboveTarget(
+        uint256 activationPrice,
+        uint256 targetPrice
+    );
     /// @notice Deployment: `maxPeriodsPerOrder` is zero.
     error ZeroMaxPeriodsPerOrder();
     /// @notice Deployment: `maxTiersPerOrder` is zero.
@@ -405,6 +447,18 @@ contract LedgerTrigger is ReentrancyGuard {
     modifier onlyUnfinished(uint256 orderId) {
         OrderStatus status = orders[orderId].status;
         if (!_isUnfinished(status)) revert OrderNotOpen(orderId, status);
+        _;
+    }
+
+    /// @notice Lets through only an order whose stored status is `Dormant`, the one an activation
+    /// accepts; rejects any other with `OrderNotDormant`. An expired order keeps its stored status
+    /// here.
+    /// @param orderId The order.
+    modifier onlyDormant(uint256 orderId) {
+        OrderStatus status = orders[orderId].status;
+        if (status != OrderStatus.Dormant) {
+            revert OrderNotDormant(orderId, status);
+        }
         _;
     }
 
@@ -507,6 +561,89 @@ contract LedgerTrigger is ReentrancyGuard {
         );
     }
 
+    /// @notice Places a `Dormant` order for the caller, who becomes its owner: a `Limit` order that
+    /// cannot be filled until it has been activated, which needs the price feed to report a price
+    /// at or above `activationPrice`. Once activated it is an `Open` order like one placed with
+    /// `createOrder`. Moves no tokens and no ETH, and needs no USDC allowance.
+    /// @dev Anyone can call it. Rejects, in this order: a zero `usdcAmount` (`ZeroAmount`); a
+    /// `usdcAmount` above `maxOrderAmount` (`AmountAboveMax`); a zero `targetPrice`
+    /// (`ZeroTargetPrice`); an `activationPrice` not above `targetPrice`
+    /// (`ActivationNotAboveTarget`); a zero `recipient` (`ZeroRecipient`); a zero `executor`
+    /// (`ZeroExecutor`); an `expiry` not after the current block's time (`ExpiryNotInFuture`); a
+    /// caller who already has `maxOpenOrdersPerOwner` unfinished orders, expired ones included
+    /// (`TooManyOpenOrders`). A dormant order takes one of the owner's slots and counts in the
+    /// owner's open total from the moment it is placed. The executor may be the caller. Emits
+    /// `OrderCreated`.
+    /// @param usdcAmount USDC to spend, in the token's smallest unit (uint256).
+    /// @param targetPrice ETH price in USD with the price feed's decimals (uint256).
+    /// @param activationPrice ETH price in USD with the price feed's decimals at or above which the
+    /// order can be activated; must be above `targetPrice` (uint256).
+    /// @param recipient Address that receives the ETH (address).
+    /// @param executor Address the owner names for activating and filling the order; may be the
+    /// owner (address).
+    /// @param expiry Last second, in Unix time, at which the order is valid (uint256).
+    /// @return orderId ID of the new order, numbered with the orders `createOrder` places
+    /// (uint256).
+    function createDormantOrder(
+        uint256 usdcAmount,
+        uint256 targetPrice,
+        uint256 activationPrice,
+        address recipient,
+        address executor,
+        uint256 expiry
+    ) external returns (uint256 orderId) {
+        _requireValidAmountAndTarget(usdcAmount, targetPrice);
+        if (!(activationPrice > targetPrice)) {
+            revert ActivationNotAboveTarget(activationPrice, targetPrice);
+        }
+        _requireValidPartiesExpiryAndSlot(recipient, executor, expiry);
+        orderId = _placeLimitOrder(
+            usdcAmount,
+            targetPrice,
+            activationPrice,
+            recipient,
+            executor,
+            expiry
+        );
+    }
+
+    /// @notice Activates a dormant order once the price has risen to its activation price: the
+    /// order goes from `Dormant` to `Open` and can be filled from then on. Moves no tokens and no
+    /// ETH, calls neither the USDC token nor the swap venue, and leaves the owner's open count and
+    /// total as they were.
+    /// @dev Only the order's owner or its executor can call it. Rejects, in this order: an ID that
+    /// no order has (`OrderNotFound`); a caller other than the owner and the executor
+    /// (`NotOrderOwnerOrExecutor`); then the checks that `canActivate` reports, each with its own
+    /// error: stored status not `Dormant` (`OrderNotDormant`), expiry passed (`OrderExpired`),
+    /// price zero or below or updated after the current block's time (`InvalidPrice`), price
+    /// older than `maxPriceAge` (`StalePrice`), price below the activation price
+    /// (`PriceBelowActivation`). A price exactly `maxPriceAge` old counts as fresh, a price equal
+    /// to the activation price is enough, and an order can still be activated at its expiry
+    /// second. Then it sets the status to `Open`, keeping the activation price as it was, and
+    /// emits `OrderActivated`. If the price feed reverts, the call reverts with the feed's own
+    /// revert data.
+    /// @param orderId The order (uint256).
+    function activateOrder(
+        uint256 orderId
+    )
+        external
+        orderExists(orderId)
+        onlyOrderOwnerOrExecutor(orderId)
+        onlyDormant(orderId)
+    {
+        // The modifiers have run, in this order: step 0 (the order exists), step 1 (the caller is
+        // the owner or the executor) and step 2 (the stored status is `Dormant`).
+        Order storage order = orders[orderId];
+        // Steps 2 to 5: stored status, expiry, price valid and fresh, price not below activation.
+        uint256 price = _requireActivatable(orderId, order);
+
+        // Step 6: the order is open from now on.
+        order.status = OrderStatus.Open;
+
+        // Step 7: record the activation.
+        emit OrderActivated(orderId, msg.sender, price);
+    }
+
     /// @notice Fills an open order: takes the USDC of this fill from the owner, swaps it for ETH at
     /// the swap venue and sends all of that ETH to the order's recipient. A `Limit` order is
     /// filled once, for all of its `usdcRemaining`, at no more than its target price.
@@ -557,7 +694,8 @@ contract LedgerTrigger is ReentrancyGuard {
         // The modifiers have run, in this order: the reentrancy guard, step 0 (the order exists),
         // step 1 (the caller is the owner or the executor) and the stored status of step 2.
         Order storage order = orders[orderId];
-        // Steps 2 to 5: status, expiry, this fill's amount and price cap, price, allowance, balance.
+        // Steps 2 to 5: status, expiry, this fill's amount and price cap, price, allowance and
+        // balance.
         FillCheck memory check = _requireFillable(orderId, order);
         uint256 amount = check.amount;
         uint256 price = uint256(check.price);
@@ -675,6 +813,29 @@ contract LedgerTrigger is ReentrancyGuard {
     {
         reason = _checkFill(orders[orderId]).blocker;
         fillable = reason == FillBlocker.None;
+    }
+
+    /// @notice Says whether `activateOrder` would get past its checks for this order right now
+    /// and, if not, the first reason why.
+    /// @dev Anyone can call it. It does not look at the caller, so it says nothing about who may
+    /// activate the order. Rejects an ID that no order has (`OrderNotFound`), ID 0 included. It
+    /// runs the very checks that `activateOrder` runs after checking the caller, in the same
+    /// order: stored status, expiry, price. It also reverts if the price feed reverts when it
+    /// reads it.
+    /// @param orderId The order (uint256).
+    /// @return activatable True exactly when `reason` is `None` (bool).
+    /// @return reason The first reason found, or `None` (an `ActivationBlocker`, uint8 in the
+    /// ABI).
+    function canActivate(
+        uint256 orderId
+    )
+        external
+        view
+        orderExists(orderId)
+        returns (bool activatable, ActivationBlocker reason)
+    {
+        reason = _checkActivation(orders[orderId]).blocker;
+        activatable = reason == ActivationBlocker.None;
     }
 
     /// @notice Number of orders of `owner` whose stored status is `Dormant`, `Open` or
@@ -848,18 +1009,16 @@ contract LedgerTrigger is ReentrancyGuard {
         // A `Limit` order spends all it has left, at no more than its target price.
         check.amount = order.usdcRemaining;
         check.priceCap = order.targetPrice;
-        (, int256 price, , uint256 updatedAt, ) = priceFeed.latestRoundData();
-        check.price = price;
-        check.updatedAt = updatedAt;
-        if (price < 1 || updatedAt > block.timestamp) {
+        (check.price, check.updatedAt) = _latestPrice();
+        if (_isInvalidPrice(check.price, check.updatedAt)) {
             check.blocker = FillBlocker.InvalidPrice;
             return check;
         }
-        if (block.timestamp - updatedAt > maxPriceAge) {
+        if (_isStalePrice(check.updatedAt)) {
             check.blocker = FillBlocker.StalePrice;
             return check;
         }
-        if (uint256(price) > check.priceCap) {
+        if (uint256(check.price) > check.priceCap) {
             check.blocker = FillBlocker.PriceAboveTarget;
             return check;
         }
@@ -906,6 +1065,96 @@ contract LedgerTrigger is ReentrancyGuard {
         if (blocker == FillBlocker.InsufficientBalance) {
             revert InsufficientBalance(check.balance, check.amount);
         }
+    }
+
+    /// @notice Runs the activation checks on an order in a fixed order and stops at the first that
+    /// fails: stored status (`Dormant`), expiry, price (above zero and not updated in the future,
+    /// then not older than `maxPriceAge`, then not below the activation price). Both
+    /// `canActivate` and `activateOrder` use it, so they always agree.
+    /// @param order The order.
+    /// @return check The first reason found, or `None`, and the values read on the way.
+    function _checkActivation(
+        Order storage order
+    ) private view returns (ActivationCheck memory check) {
+        if (order.status != OrderStatus.Dormant) {
+            check.blocker = ActivationBlocker.NotDormant;
+            return check;
+        }
+        if (_isExpired(order)) {
+            check.blocker = ActivationBlocker.Expired;
+            return check;
+        }
+        (check.price, check.updatedAt) = _latestPrice();
+        if (_isInvalidPrice(check.price, check.updatedAt)) {
+            check.blocker = ActivationBlocker.InvalidPrice;
+            return check;
+        }
+        if (_isStalePrice(check.updatedAt)) {
+            check.blocker = ActivationBlocker.StalePrice;
+            return check;
+        }
+        if (uint256(check.price) < order.activationPrice) {
+            check.blocker = ActivationBlocker.PriceBelowActivation;
+        }
+    }
+
+    /// @notice Runs the activation checks and reverts with the error that matches the first
+    /// reason found.
+    /// @param orderId The order's ID, for the errors.
+    /// @param order The order.
+    /// @return price The feed's price, when every check passes.
+    function _requireActivatable(
+        uint256 orderId,
+        Order storage order
+    ) private view returns (uint256 price) {
+        ActivationCheck memory check = _checkActivation(order);
+        ActivationBlocker blocker = check.blocker;
+        if (blocker == ActivationBlocker.NotDormant) {
+            revert OrderNotDormant(orderId, order.status);
+        }
+        if (blocker == ActivationBlocker.Expired) {
+            revert OrderExpired(orderId, order.expiry);
+        }
+        if (blocker == ActivationBlocker.InvalidPrice) {
+            revert InvalidPrice(check.price);
+        }
+        if (blocker == ActivationBlocker.StalePrice) {
+            revert StalePrice(check.updatedAt, maxPriceAge);
+        }
+        price = uint256(check.price);
+        if (blocker == ActivationBlocker.PriceBelowActivation) {
+            revert PriceBelowActivation(price, order.activationPrice);
+        }
+    }
+
+    /// @notice Reads the price feed's latest price and its update time.
+    /// @return price The feed's price, with the feed's decimals.
+    /// @return updatedAt When the feed last updated it.
+    function _latestPrice()
+        private
+        view
+        returns (int256 price, uint256 updatedAt)
+    {
+        (, price, , updatedAt, ) = priceFeed.latestRoundData();
+    }
+
+    /// @notice True when a price cannot be used: it is zero or below, or its update time is after
+    /// the current block's time.
+    /// @param price The feed's price.
+    /// @param updatedAt The feed's update time.
+    /// @return Whether the price is invalid.
+    function _isInvalidPrice(
+        int256 price,
+        uint256 updatedAt
+    ) private view returns (bool) {
+        return price < 1 || updatedAt > block.timestamp;
+    }
+
+    /// @notice True when a price is older than `maxPriceAge`. A price exactly that old is not.
+    /// @param updatedAt The feed's update time, not after the current block's time.
+    /// @return Whether the price is stale.
+    function _isStalePrice(uint256 updatedAt) private view returns (bool) {
+        return block.timestamp - updatedAt > maxPriceAge;
     }
 
     /// @notice Step 8 of a fill: approves the swap venue for `amount` USDC, swaps it for ETH with

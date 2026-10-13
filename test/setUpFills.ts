@@ -1,7 +1,8 @@
 // Sets up a brand-new local chain on which orders can be filled, for the fill
 // tests. On top of `deployLedgerTrigger` it stocks the mock swap venue with
 // ETH, gives `owner` and `otherOwner` 1000 USDC each with a matching allowance
-// to LedgerTrigger, and adds helpers to place, fill and inspect orders.
+// to LedgerTrigger, and adds helpers to place, fill and inspect orders, and to
+// place, activate and inspect dormant ones.
 //
 // This file holds no tests; test files import `setUpFills` from it.
 //
@@ -31,6 +32,12 @@ const USDC_DECIMALS = 6n;
  * a block, not only a failed gas estimate.
  */
 export const FILL_GAS = 1_000_000n;
+
+/**
+ * Gas sent with every activation, fixed for the same reason as `FILL_GAS`: a
+ * rejected activation is a real reverted transaction in a block.
+ */
+export const ACTIVATE_GAS = 1_000_000n;
 
 /** Values of the contract's OrderStatus, in declaration order. */
 export const Status = {
@@ -63,6 +70,16 @@ export const FillBlocker = {
   PriceAboveTarget: 8,
   InsufficientAllowance: 9,
   InsufficientBalance: 10,
+} as const;
+
+/** Values of the contract's ActivationBlocker, in declaration order. */
+export const ActivationBlocker = {
+  None: 0,
+  NotDormant: 1,
+  Expired: 2,
+  InvalidPrice: 3,
+  StalePrice: 4,
+  PriceBelowActivation: 5,
 } as const;
 
 /** 10^k with k = 18 + feed decimals - USDC decimals. */
@@ -130,6 +147,11 @@ export type OrderInput = {
   readonly recipient: Address;
   readonly executor: Address;
   readonly expiry: bigint;
+};
+
+/** The six inputs of createDormantOrder. */
+export type DormantInput = OrderInput & {
+  readonly activationPrice: bigint;
 };
 
 export type SetUpOptions = DeployOptions & {
@@ -250,6 +272,99 @@ export async function setUpFills(options: SetUpOptions = {}) {
   }
 
   /**
+   * The default input with an activation price of 2200 USD: 100 USDC at a
+   * target of 2000 USD, valid for one day.
+   */
+  async function defaultDormantInput(): Promise<DormantInput> {
+    return { ...(await defaultInput()), activationPrice: usd(2_200n) };
+  }
+
+  /**
+   * Places a dormant order with the default dormant input changed by
+   * `changes`, as `from`, on `on` (default: the main LedgerTrigger). Returns
+   * its ID, the input, the receipt and the OrderCreated event.
+   */
+  async function placeDormant(
+    changes: Partial<DormantInput> = {},
+    from: Wallet = owner,
+    on: Trigger = trigger,
+  ) {
+    const input = { ...(await defaultDormantInput()), ...changes };
+    const receipt = await mined(
+      await on.write.createDormantOrder(
+        [
+          input.usdcAmount,
+          input.targetPrice,
+          input.activationPrice,
+          input.recipient,
+          input.executor,
+          input.expiry,
+        ],
+        { account: from.account },
+      ),
+    );
+    const events = parseEventLogs({
+      abi: on.abi,
+      logs: receipt.logs,
+      eventName: "OrderCreated",
+    });
+    assert.equal(events.length, 1);
+    const event = events[0];
+    if (event === undefined) throw new Error("no OrderCreated event");
+    return { orderId: event.args.orderId, input, receipt, event };
+  }
+
+  /**
+   * Sends activateOrder as `from` (default: the executor) to `on` (default:
+   * the main LedgerTrigger), with a fixed gas limit. Returns the hash promise.
+   */
+  function sendActivate(
+    orderId: bigint,
+    from: Wallet = executor,
+    on: Trigger = trigger,
+  ): Promise<Hash> {
+    return on.write.activateOrder([orderId], {
+      account: from.account,
+      gas: ACTIVATE_GAS,
+    });
+  }
+
+  /**
+   * Activates an order as `from` (default: the executor) on `on` (default:
+   * the main LedgerTrigger) and checks that it succeeded with exactly one
+   * OrderActivated event. Returns the event and the receipt.
+   */
+  async function activate(
+    orderId: bigint,
+    from: Wallet = executor,
+    on: Trigger = trigger,
+  ) {
+    const receipt = await mined(await sendActivate(orderId, from, on));
+    assert.equal(receipt.status, "success");
+    const events = parseEventLogs({
+      abi: on.abi,
+      logs: receipt.logs,
+      eventName: "OrderActivated",
+    });
+    assert.equal(events.length, 1);
+    const event = events[0];
+    if (event === undefined) throw new Error("no OrderActivated event");
+    return { event, receipt };
+  }
+
+  /** What canActivate reports, as `from` (default: a stranger) on `on`. */
+  async function canActivate(
+    orderId: bigint,
+    from: Wallet = fixture.stranger,
+    on: Trigger = trigger,
+  ) {
+    const [activatable, reason] = await on.read.canActivate([orderId], {
+      account: from.account,
+    });
+    return { activatable, reason };
+  }
+
+  /**
    * Sends fillOrder as `from` (default: the executor) to `on` (default: the
    * main LedgerTrigger), with a fixed gas limit. Returns the hash promise.
    */
@@ -342,5 +457,10 @@ export async function setUpFills(options: SetUpOptions = {}) {
     fill,
     canFill,
     bookOf,
+    defaultDormantInput,
+    placeDormant,
+    sendActivate,
+    activate,
+    canActivate,
   };
 }
