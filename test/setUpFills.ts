@@ -3,8 +3,8 @@
 // ETH, gives `owner` and `otherOwner` 1000 USDC each with a matching allowance
 // to LedgerTrigger, and adds helpers to place, fill and inspect orders, to
 // place, activate and inspect dormant ones, to place time-scheduled (Dca)
-// ones and read their schedules, and to place Ladder ones and read their
-// tiers.
+// ones and read their schedules, to place Ladder ones and read their tiers,
+// and to find the receipt contract of a LedgerTrigger and the logs it emitted.
 //
 // This file holds no tests; test files import `setUpFills` from it.
 //
@@ -13,7 +13,13 @@
 
 import assert from "node:assert/strict";
 
-import { parseEventLogs, type Address, type Hash } from "viem";
+import {
+  getAddress,
+  parseEventLogs,
+  type Address,
+  type Hash,
+  type TransactionReceipt,
+} from "viem";
 
 import {
   ONE_USDC,
@@ -194,6 +200,7 @@ export type SetUpOptions = DeployOptions & {
 type Fixture = Awaited<ReturnType<typeof deployLedgerTrigger>>;
 export type Wallet = Fixture["owner"];
 export type Trigger = Fixture["trigger"];
+export type Receipts = Fixture["fillReceipt"];
 
 /**
  * Deploys the full set on a new chain and prepares it for fills. The price
@@ -625,6 +632,29 @@ export async function setUpFills(options: SetUpOptions = {}) {
     return on.read.getTiers([orderId]);
   }
 
+  /** The receipt contract bound to `on` (default: the main LedgerTrigger). */
+  async function fillReceiptOf(on: Trigger = trigger): Promise<Receipts> {
+    return fixture.viem.getContractAt("FillReceipt", await on.read.receipt());
+  }
+
+  /**
+   * The logs the receipt contract `of` (default: the main one) emitted in the
+   * transaction of `receipt`, in their order, decoded with its ABI. They are
+   * picked by the address that emitted them first: USDC's Transfer and the
+   * receipt contract's Transfer have the same first topic.
+   */
+  function receiptLogsIn(
+    receipt: TransactionReceipt,
+    of: Receipts = fixture.fillReceipt,
+  ) {
+    return parseEventLogs({
+      abi: of.abi,
+      logs: receipt.logs.filter(
+        (log) => getAddress(log.address) === getAddress(of.address),
+      ),
+    });
+  }
+
   return {
     ...fixture,
     approve,
@@ -652,5 +682,7 @@ export async function setUpFills(options: SetUpOptions = {}) {
     sendPlaceLadder,
     placeLadder,
     tiersOf,
+    fillReceiptOf,
+    receiptLogsIn,
   };
 }

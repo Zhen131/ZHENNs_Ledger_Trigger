@@ -32,6 +32,9 @@ import {ISwapVenue} from "./interfaces/ISwapVenue.sol";
 /// tier's amount at no more than that tier's price, so a price that falls through several tiers
 /// at once still fills only the next one. Here too the owner approves the whole budget once, and
 /// the order is partly filled after its first fill and filled after its last.
+/// Every fill, of any kind of order, also gets the order's owner a receipt: an ERC-721 token
+/// issued by the receipt contract bound to this one at deployment, one for each fill, which
+/// records the fill and can never be transferred.
 /// @dev There is no admin: no pause, no upgrade, no setter and no withdrawal. The ten deployment
 /// parameters can never change. The status `Expired` is never stored; `statusOf` works it out from
 /// the expiry. A fill keeps none of the USDC and ETH it moves: it passes all of both straight
@@ -957,8 +960,8 @@ contract LedgerTrigger is ReentrancyGuard {
     /// no more than that tier's price; one call fills one tier only, even when the price is below
     /// several of them.
     /// @dev Only the order's owner or its executor can call it. It takes no address and no
-    /// instruction from the caller: the token, the price feed and the swap venue are fixed at
-    /// deployment, and the recipient is fixed in the order. Rejects, in this order: a call made
+    /// instruction from the caller: the token, the price feed, the swap venue and the receipt
+    /// contract are fixed at deployment, and the recipient is fixed in the order. Rejects, in this order: a call made
     /// while a fill is already running (`ReentrancyGuardReentrantCall`); an ID that no order has
     /// (`OrderNotFound`); a caller other than the owner and the executor
     /// (`NotOrderOwnerOrExecutor`); then the checks that `canFill` reports, each with its own
@@ -984,9 +987,11 @@ contract LedgerTrigger is ReentrancyGuard {
     /// its USDC balance must be back to what it was before the USDC was taken
     /// (`SwapUsdcMismatch`), and its ETH balance must have gone up by at least the minimum
     /// (`InsufficientEthOut`). It then sets the venue's allowance back to zero, sends all of the
-    /// ETH that came in to the recipient (`EthTransferFailed`) and emits `OrderFilled`. If the
-    /// price feed, the USDC token or the swap venue reverts on the way, the fill reverts with that
-    /// call's own revert data, unchanged even when it is empty. Only the two approvals of the swap
+    /// ETH that came in to the recipient (`EthTransferFailed`), has the receipt contract issue
+    /// the order's owner one receipt for this fill, and emits `OrderFilled`. If the receipt
+    /// cannot be issued, the whole fill reverts. If the price feed, the USDC token, the swap venue
+    /// or the receipt contract reverts on the way, the fill reverts with that call's own revert
+    /// data, unchanged even when it is empty. Only the two approvals of the swap
     /// venue (to the amount, then back to zero) are handled differently: if one reverts or
     /// returns false, OpenZeppelin's `forceApprove` tries again, setting the allowance to zero and
     /// then to the wanted amount, and a revert in those two calls is passed on. A USDC transfer that
@@ -1038,18 +1043,11 @@ contract LedgerTrigger is ReentrancyGuard {
         (bool sent, ) = order.recipient.call{value: ethReceived}("");
         if (!sent) revert EthTransferFailed(order.recipient, ethReceived);
 
-        // Step 12: record the fill.
-        emit OrderFilled(
-            orderId,
-            order.owner,
-            msg.sender,
-            order.recipient,
-            amount,
-            ethReceived,
-            price,
-            order.fillsDone,
-            order.fillsTotal
-        );
+        // Step 11: issue the owner a receipt for this fill; see `_issueReceipt`.
+        _issueReceipt(orderId, order, amount, ethReceived, price);
+
+        // Step 12: record the fill; see `_emitOrderFilled`.
+        _emitOrderFilled(orderId, order, amount, ethReceived, price);
     }
 
     /// @notice Cancels an unfinished order, expired or not, which frees one of the owner's
@@ -1150,8 +1148,9 @@ contract LedgerTrigger is ReentrancyGuard {
     /// period (not started, current period bought already), price (against the target price, or
     /// for a `Ladder` order the price of its next tier), allowance and balance (against the
     /// amount of this fill: for a `Ladder` order, the amount of its next tier). It does not try
-    /// the swap, so a fill it reports as possible can fail at the swap venue or when sending the
-    /// ETH. It also reverts if the price feed or the USDC token reverts when it reads them.
+    /// the swap, so a fill it reports as possible can fail at the swap venue, when sending the ETH
+    /// or when issuing the receipt. It also reverts if the price feed or the USDC token reverts
+    /// when it reads them.
     /// @param orderId The order (uint256).
     /// @return fillable True exactly when `reason` is `None` (bool).
     /// @return reason The first reason found, or `None` (a `FillBlocker`, uint8 in the ABI).
@@ -1682,6 +1681,61 @@ contract LedgerTrigger is ReentrancyGuard {
         if (ethReceived < minEthOut) {
             revert InsufficientEthOut(ethReceived, minEthOut);
         }
+    }
+
+    /// @notice Step 11 of a fill: has the receipt contract issue the order's owner one receipt
+    /// for this fill, recording the same values `OrderFilled` logs and the block's time.
+    /// @dev A plain call, not caught: if the receipt contract reverts, the whole fill reverts
+    /// with its revert data. The new receipt's ID is not kept.
+    /// @param orderId The order.
+    /// @param order The order, already counted for this fill.
+    /// @param amount The USDC this fill spent, in the token's smallest unit.
+    /// @param ethReceived The ETH this fill bought, in wei.
+    /// @param price The price feed's price this fill used, with the feed's decimals.
+    function _issueReceipt(
+        uint256 orderId,
+        Order storage order,
+        uint256 amount,
+        uint256 ethReceived,
+        uint256 price
+    ) private {
+        receipt.mint(
+            order.owner,
+            IFillReceipt.Receipt({
+                orderId: orderId,
+                fillNumber: order.fillsDone,
+                usdcIn: amount,
+                ethOut: ethReceived,
+                price: price,
+                filledAt: block.timestamp
+            })
+        );
+    }
+
+    /// @notice Step 12 of a fill: emits `OrderFilled`. The caller is the one who filled the order.
+    /// @param orderId The order.
+    /// @param order The order, already counted for this fill.
+    /// @param amount The USDC this fill spent, in the token's smallest unit.
+    /// @param ethReceived The ETH this fill bought, in wei.
+    /// @param price The price feed's price this fill used, with the feed's decimals.
+    function _emitOrderFilled(
+        uint256 orderId,
+        Order storage order,
+        uint256 amount,
+        uint256 ethReceived,
+        uint256 price
+    ) private {
+        emit OrderFilled(
+            orderId,
+            order.owner,
+            msg.sender,
+            order.recipient,
+            amount,
+            ethReceived,
+            price,
+            order.fillsDone,
+            order.fillsTotal
+        );
     }
 
     /// @notice The smallest ETH output a fill accepts, in wei: the larger of
