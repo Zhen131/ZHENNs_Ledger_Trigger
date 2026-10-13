@@ -22,6 +22,7 @@ export const PAGE_MARKUP = `
       <button id="connect" class="button button-primary" type="button">${WALLET_ICON}<span id="connect-label">Connect wallet</span></button>
       <p id="wallet-status" class="wallet-status">Not connected</p>
     </div>
+    <p id="contract-limits" class="limits" hidden></p>
     <p id="page-notice" class="notice" role="status" hidden></p>
   </section>
 

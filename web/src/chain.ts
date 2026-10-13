@@ -15,13 +15,18 @@ import {
   type PublicClient,
 } from "viem";
 
+import { OrderStatus } from "../../keeper/names.ts";
 import { PRICE_FEED_ABI, TRIGGER_ABI, USDC_ABI } from "./contracts.ts";
 import type { FeedLog } from "./lib/feed.ts";
+import { OrderKind } from "./lib/kinds.ts";
+import type { ContractLimits } from "./lib/limits.ts";
 import type {
   CreatedOrder,
   Decimals,
   OrderSnapshot,
+  ScheduleData,
   StoredOrder,
+  TierData,
 } from "./lib/orders.ts";
 
 export const POLLING_MS = 1000;
@@ -41,8 +46,8 @@ export type Trigger = {
   readonly usdc: Address;
   readonly priceFeed: Address;
   readonly decimals: Decimals;
-  readonly maxOrderAmount: bigint;
-  readonly maxOpenOrders: bigint;
+  /** The four deployment limits the page shows under the address. */
+  readonly limits: ContractLimits;
 };
 
 export type TriggerLoad =
@@ -100,7 +105,9 @@ export async function loadTrigger(
       usdcDecimals,
       priceDecimals,
       maxOrderAmount,
-      maxOpenOrders,
+      maxOpenOrdersPerOwner,
+      maxPeriodsPerOrder,
+      maxTiersPerOrder,
     ] = await Promise.all([
       read<Address>(client, address, "usdc"),
       read<Address>(client, address, "priceFeed"),
@@ -108,6 +115,8 @@ export async function loadTrigger(
       read<number>(client, address, "priceDecimals"),
       read<bigint>(client, address, "maxOrderAmount"),
       read<bigint>(client, address, "maxOpenOrdersPerOwner"),
+      read<bigint>(client, address, "maxPeriodsPerOrder"),
+      read<bigint>(client, address, "maxTiersPerOrder"),
     ]);
     return {
       ok: true,
@@ -116,15 +125,19 @@ export async function loadTrigger(
         usdc,
         priceFeed,
         decimals: { usdc: Number(usdcDecimals), price: Number(priceDecimals) },
-        maxOrderAmount,
-        maxOpenOrders,
+        limits: {
+          maxOrderAmount,
+          maxOpenOrdersPerOwner,
+          maxPeriodsPerOrder,
+          maxTiersPerOrder,
+        },
       },
     };
   } catch {
     return {
       ok: false,
       message:
-        "The contract at this address is not a LedgerTrigger: its settings could not be read.",
+        "The contract at this address is not a LedgerTrigger: its settings could not be read. Use the LedgerTrigger address that the deployment printed, not the FillReceipt one.",
     };
   }
 }
@@ -178,24 +191,58 @@ export async function readOpenOrders(
   return { count, total };
 }
 
-/** One order: `getOrder`, `statusOf` and `canFill`. Throws `OrderNotFound`. */
+/**
+ * One order: `getOrder`, `statusOf` and `canFill`; then `canActivate` when it
+ * is dormant, `getSchedule` when it is a Dca order and `getTiers` when it is
+ * a Ladder order. Throws `OrderNotFound`.
+ */
 export async function readSnapshot(
   client: PublicClient,
   trigger: Trigger,
   orderId: bigint,
 ): Promise<OrderSnapshot> {
-  const [order, status, check] = await Promise.all([
+  const [order, statusValue, check] = await Promise.all([
     read<StoredOrder>(client, trigger.address, "getOrder", [orderId]),
     read<number>(client, trigger.address, "statusOf", [orderId]),
     read<readonly [boolean, number]>(client, trigger.address, "canFill", [
       orderId,
     ]),
   ]);
+  const status = Number(statusValue);
+  const kind = Number(order.kind);
+  const [activation, schedule, tiers] = await Promise.all([
+    status === OrderStatus.Dormant
+      ? read<readonly [boolean, number]>(
+          client,
+          trigger.address,
+          "canActivate",
+          [orderId],
+        )
+      : undefined,
+    kind === OrderKind.Dca
+      ? read<ScheduleData>(client, trigger.address, "getSchedule", [orderId])
+      : undefined,
+    kind === OrderKind.Ladder
+      ? read<readonly TierData[]>(client, trigger.address, "getTiers", [
+          orderId,
+        ])
+      : undefined,
+  ]);
   return {
     orderId,
-    order,
-    status: Number(status),
+    order: { ...order, kind },
+    status,
     check: { fillable: check[0], reason: Number(check[1]) },
+    ...(activation === undefined
+      ? {}
+      : {
+          activation: {
+            activatable: activation[0],
+            reason: Number(activation[1]),
+          },
+        }),
+    ...(schedule === undefined ? {} : { schedule }),
+    ...(tiers === undefined ? {} : { tiers }),
   };
 }
 
@@ -207,12 +254,20 @@ type DecodedLog = {
   readonly transactionHash: Hex | null;
 };
 
-const FEED_EVENTS = ["OrderCreated", "OrderCancelled", "OrderFilled"];
+const FEED_EVENTS = [
+  "OrderCreated",
+  "OrderScheduled",
+  "OrderTiered",
+  "OrderActivated",
+  "OrderCancelled",
+  "OrderFilled",
+];
 
 /**
  * The contract's events from block `fromBlock` to `toBlock`: the orders
- * placed, and the three kinds the event list shows, each with the time of
- * its block (`blockTimes` caches those).
+ * placed, and the six kinds the event list shows, each with the time of its
+ * block (`blockTimes` caches those). Only this contract's address is read,
+ * so the receipt contract's events never come in.
  */
 export async function readEvents(
   client: PublicClient,

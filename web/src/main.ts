@@ -16,6 +16,7 @@ import {
 } from "./events.ts";
 import { renderFeed } from "./feedList.ts";
 import { shortAddress } from "./lib/format.ts";
+import { limitsText } from "./lib/limits.ts";
 import { DEFAULT_RPC_URL, rpcUrlFrom } from "./lib/loopback.ts";
 import {
   NO_SESSION,
@@ -186,6 +187,19 @@ function startWatching(): void {
 // The contract.
 // ---------------------------------------------------------------------------
 
+/** The line of the contract's limits, shown while a contract is loaded. */
+function showLimits(): void {
+  const line = byId("contract-limits");
+  const trigger = page.trigger;
+  setShown(line, trigger !== undefined);
+  setText(
+    line,
+    trigger === undefined
+      ? ""
+      : limitsText(trigger.limits, trigger.decimals.usdc),
+  );
+}
+
 async function loadContract(text: string): Promise<void> {
   resetEvents();
   resetAllOrders();
@@ -193,6 +207,7 @@ async function loadContract(text: string): Promise<void> {
   const result = await loadTrigger(page.reader, text);
   if (!result.ok) {
     page.trigger = undefined;
+    showLimits();
     resetMetrics();
     problems.contract = result.message;
     renderNotice();
@@ -200,6 +215,7 @@ async function loadContract(text: string): Promise<void> {
     return;
   }
   page.trigger = result.trigger;
+  showLimits();
   remember(CONTRACT_KEY, result.trigger.address);
   byId<HTMLInputElement>("contract-input").value = result.trigger.address;
   problems.contract = undefined;

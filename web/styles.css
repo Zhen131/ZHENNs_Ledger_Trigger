@@ -180,8 +180,15 @@ a {
   font-size: 13px;
 }
 
-.bar .notice {
+.bar .notice,
+.bar .limits {
   flex-basis: 100%;
+}
+
+.limits {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 /* Inline notices and messages. */

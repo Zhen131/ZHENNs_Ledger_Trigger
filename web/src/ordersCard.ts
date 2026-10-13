@@ -67,13 +67,15 @@ let lookupRow: RowParts | undefined;
 let lookupId: bigint | undefined;
 const flashing = new Set<bigint>();
 
-/** The status and the reason the row of `snapshot` shows. */
+/** The status and the reasons the row of `snapshot` shows. */
 function conditionOf(
+  page: Page,
   snapshot: OrderSnapshot | undefined,
 ): RowCondition | undefined {
-  return snapshot === undefined
+  const trigger = page.trigger;
+  return snapshot === undefined || trigger === undefined
     ? undefined
-    : { status: snapshot.status, reason: snapshot.check.reason };
+    : rowCondition(orderRow(snapshot, page.session.account, trigger.decimals));
 }
 
 function isFinal(snapshot: OrderSnapshot | undefined): boolean {
@@ -239,7 +241,7 @@ async function act(
       showRowMessage(
         parts,
         failure.kind === "error" ? failure.text : "Not sent.",
-        conditionOf(snapshots.get(parts.orderId)),
+        conditionOf(page, snapshots.get(parts.orderId)),
       );
       return;
     }
