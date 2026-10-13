@@ -45,6 +45,7 @@ import {
   deployWithMocks,
 } from "./deploy.ts";
 import { demoChain } from "./demoChain.ts";
+import { playDca } from "./demoDca.ts";
 import { playDormant } from "./demoDormant.ts";
 import { mined } from "./mined.ts";
 import { ScriptError, revertName } from "./scriptError.ts";
@@ -62,6 +63,8 @@ export const DEMO_SCENARIOS = [
   "S15",
   "S27",
   "S29",
+  "S37",
+  "S38",
 ] as const;
 export type DemoScenario = (typeof DEMO_SCENARIOS)[number];
 
@@ -117,6 +120,23 @@ export const EXPECTED: Readonly<
       "transaction rejected: OrderNotOpen, status Dormant",
       "canFill: no, Dormant",
       "order afterwards: Dormant",
+    ],
+  },
+  S37: {
+    title: "Dca: the first period",
+    expected: [
+      "Open -> PartiallyFilled",
+      "OrderFilled: fill 1 of 2, one period's USDC",
+      "remaining and open total each down by one period",
+      "ETH to the recipient",
+    ],
+  },
+  S38: {
+    title: "Dca: the same period twice",
+    expected: [
+      "second fill in the same period rejected: PeriodAlreadyFilled",
+      "order afterwards: PartiallyFilled",
+      "one period later: PartiallyFilled -> Filled",
     ],
   },
 };
@@ -506,7 +526,7 @@ export async function runDemo(input: {
     deployment,
     accounts: { owner, keeper, recipient, stranger },
   });
-  for (const play of [playDormant]) {
+  for (const play of [playDormant, playDca]) {
     for (const played of await play(chain)) {
       row(played.id, played.did, played.actual, played.details);
     }

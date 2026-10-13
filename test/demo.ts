@@ -41,6 +41,17 @@ const SCENARIO_TABLE = {
     "canFill: no, Dormant",
     "order afterwards: Dormant",
   ],
+  S37: [
+    "Open -> PartiallyFilled",
+    "OrderFilled: fill 1 of 2, one period's USDC",
+    "remaining and open total each down by one period",
+    "ETH to the recipient",
+  ],
+  S38: [
+    "second fill in the same period rejected: PeriodAlreadyFilled",
+    "order afterwards: PartiallyFilled",
+    "one period later: PartiallyFilled -> Filled",
+  ],
 } as const;
 
 async function playOnFreshChain(): Promise<DemoResult> {
@@ -59,7 +70,7 @@ describe("demo: the scenarios on a fresh local chain", () => {
 
     assert.deepEqual(
       result.rows.map((row) => row.id),
-      ["S01", "S03", "S04", "S06", "S07", "S15", "S27", "S29"],
+      ["S01", "S03", "S04", "S06", "S07", "S15", "S27", "S29", "S37", "S38"],
     );
     assert.deepEqual(DEMO_SCENARIOS, [
       "S01",
@@ -70,6 +81,8 @@ describe("demo: the scenarios on a fresh local chain", () => {
       "S15",
       "S27",
       "S29",
+      "S37",
+      "S38",
     ]);
     for (const row of result.rows) {
       assert.equal(row.pass, true, `${row.id}: ${row.actual.join("; ")}`);
@@ -95,11 +108,14 @@ describe("demo: the scenarios on a fresh local chain", () => {
     const lines = formatDemo(await playOnFreshChain());
     const text = lines.join("\n");
 
-    assert.equal(lines.filter((line) => line === "  Result:   PASS").length, 8);
+    assert.equal(
+      lines.filter((line) => line === "  Result:   PASS").length,
+      10,
+    );
     for (const id of DEMO_SCENARIOS) {
       assert.match(text, new RegExp(`^\\| ${id} \\|.*\\| PASS   \\|$`, "m"));
     }
-    assert.equal(lines.at(-1), "8 of 8 scenarios PASS.");
+    assert.equal(lines.at(-1), "10 of 10 scenarios PASS.");
     assert.doesNotMatch(text, /FAIL/);
   });
 });
@@ -131,7 +147,7 @@ describe("demo: a result that is not the expected one", () => {
 
     assert.equal(allPassed(spoiled), false);
     assert.match(lines.join("\n"), /^\| S06 \|.*\| FAIL   \|$/m);
-    assert.equal(lines.at(-1), "7 of 8 scenarios PASS. FAIL: S06.");
+    assert.equal(lines.at(-1), "9 of 10 scenarios PASS. FAIL: S06.");
   });
 });
 
@@ -185,8 +201,8 @@ describe("demo: the npm run demo entry point", () => {
     );
 
     assert.equal(run.code, 0, run.output);
-    assert.equal(run.output.match(/^ {2}Result: {3}PASS$/gm)?.length, 8);
-    assert.match(run.output, /^8 of 8 scenarios PASS\.$/m);
+    assert.equal(run.output.match(/^ {2}Result: {3}PASS$/gm)?.length, 10);
+    assert.match(run.output, /^10 of 10 scenarios PASS\.$/m);
     assert.doesNotMatch(run.output, /https?:\/\//);
   });
 });
