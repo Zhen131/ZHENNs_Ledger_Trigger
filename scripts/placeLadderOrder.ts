@@ -32,11 +32,11 @@
 // open order too many) stops the script before any transaction, so no
 // allowance is set for it. The simulation runs on the latest block: as with
 // place-order, if the node has been idle for longer than the expiry, the
-// order can still be refused after the allowance is set. Then it sets the owner's USDC allowance to LedgerTrigger to
-// what the owner's open orders will add up to once this one is placed:
-// `openOrderTotal` before it, plus the order's whole budget (the amounts of
-// its tiers added up). Then it places the order and reads it and its tiers
-// back from the contract.
+// order can still be refused after the allowance is set. Then it sets the
+// owner's USDC allowance to LedgerTrigger to what the owner's open orders will
+// add up to once this one is placed: `openOrderTotal` before it, plus the
+// order's whole budget (the amounts of its tiers added up). Then it places the
+// order and reads it and its tiers back from the contract.
 
 import type { NetworkConnection } from "hardhat/types/network";
 import { erc20Abi, parseEventLogs, type Address } from "viem";

@@ -81,12 +81,12 @@ contract LedgerTrigger is ReentrancyGuard {
     /// current period has been bought already. `InvalidPrice`: the feed's price is zero or below,
     /// or its update time is after the current block's time. `StalePrice`: the price is older than
     /// `maxPriceAge`. `PriceAboveTarget`: the price is above the most this fill may pay, which is
-    /// the order's target price: for a `Dca` order, the cap of every period; for a `Ladder` order,
-    /// the price of its next tier. `InsufficientAllowance`: the owner's USDC allowance to this
-    /// contract is below the amount of this fill, which for a `Dca` order is its amount per
-    /// period and for a `Ladder` order the amount of its next tier. `InsufficientBalance`: the
-    /// owner's USDC balance is below the amount of this fill. When several apply, the first in
-    /// this list is reported.
+    /// the order's target price, or for a `Ladder` order the price of its next tier; for a `Dca`
+    /// order the target price is the cap of every period. `InsufficientAllowance`: the owner's USDC
+    /// allowance to this contract is below the amount of this fill, which for a `Dca` order is its
+    /// amount per period and for a `Ladder` order the amount of its next tier.
+    /// `InsufficientBalance`: the owner's USDC balance is below the amount of this fill. When
+    /// several apply, the first in this list is reported.
     enum FillBlocker {
         None,
         NotOpen,
@@ -123,17 +123,16 @@ contract LedgerTrigger is ReentrancyGuard {
     /// kind of order. `status` is the stored status and is never `Expired`. `usdcAmount` is the
     /// USDC budget of the whole order, in the token's smallest unit: for a `Dca` order, its amount
     /// per period times its number of periods; for a `Ladder` order, the amounts of its tiers
-    /// added up. `usdcRemaining` is the part
-    /// of that budget not spent yet: `usdcAmount` when the order is placed, less the amount of
-    /// each fill. `targetPrice` is the ETH price in USD, with the price feed's decimals, above
-    /// which a fill is refused; for a `Ladder` order it is the price of tier 0, the highest, and
-    /// each fill is held to the price of the tier it buys. `activationPrice` is zero for an order that is `Open` once placed;
-    /// otherwise the order is placed `Dormant` and can be activated once the price is at or above
-    /// it, and it keeps its value after the activation. `fillsTotal` is how many fills the order
-    /// takes in all, and `fillsDone` how many it has had. `createdAt` is the time of the block
-    /// that placed the order. `expiry` is the last second, in Unix time, at which the order is
-    /// still valid; for a `Dca` order it is worked out from the schedule: the last second of its
-    /// last period.
+    /// added up. `usdcRemaining` is the part of that budget not spent yet: `usdcAmount` when the
+    /// order is placed, less the amount of each fill. `targetPrice` is the ETH price in USD, with
+    /// the price feed's decimals, above which a fill is refused; for a `Ladder` order it is the
+    /// price of tier 0, the highest, and each fill is held to the price of the tier it buys.
+    /// `activationPrice` is zero for an order that is `Open` once placed; otherwise the order is
+    /// placed `Dormant` and can be activated once the price is at or above it, and it keeps its
+    /// value after the activation. `fillsTotal` is how many fills the order takes in all, and
+    /// `fillsDone` how many it has had. `createdAt` is the time of the block that placed the order.
+    /// `expiry` is the last second, in Unix time, at which the order is still valid; for a `Dca`
+    /// order it is worked out from the schedule: the last second of its last period.
     struct Order {
         address owner;
         address executor;
@@ -453,8 +452,8 @@ contract LedgerTrigger is ReentrancyGuard {
     /// @param maxPriceAge The oldest price age allowed, in seconds.
     error StalePrice(uint256 updatedAt, uint256 maxPriceAge);
     /// @notice The price feed's price is above the most this fill may pay: the order's target
-    /// price, which for a `Dca` order is the cap of every period, or for a `Ladder` order the
-    /// price of its next tier.
+    /// price, or for a `Ladder` order the price of its next tier. For a `Dca` order the target
+    /// price is the cap of every period.
     /// @param price The price the feed reported.
     /// @param targetPrice The most this fill may pay.
     error PriceAboveTarget(uint256 price, uint256 targetPrice);
@@ -1126,9 +1125,8 @@ contract LedgerTrigger is ReentrancyGuard {
     /// period (not started, current period bought already), price (against the target price, or
     /// for a `Ladder` order the price of its next tier), allowance and balance (against the
     /// amount of this fill: for a `Ladder` order, the amount of its next tier). It does not try
-    /// the swap, so a fill it reports as
-    /// possible can fail at the swap venue or when sending the ETH. It also reverts if the price
-    /// feed or the USDC token reverts when it reads them.
+    /// the swap, so a fill it reports as possible can fail at the swap venue or when sending the
+    /// ETH. It also reverts if the price feed or the USDC token reverts when it reads them.
     /// @param orderId The order (uint256).
     /// @return fillable True exactly when `reason` is `None` (bool).
     /// @return reason The first reason found, or `None` (a `FillBlocker`, uint8 in the ABI).

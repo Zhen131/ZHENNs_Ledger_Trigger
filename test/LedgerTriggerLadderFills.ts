@@ -292,6 +292,10 @@ describe("LedgerTrigger Ladder orders: cancelling and activation (S53, S54)", ()
     const left =
       tierAt(input.tiers, 1).usdcAmount + tierAt(input.tiers, 2).usdcAmount;
     assert.deepEqual(await f.bookOf(owner), { count: 1n, total: left });
+    assert.equal(
+      (await trigger.read.getOrder([orderId])).status,
+      Status.PartiallyFilled,
+    );
 
     await f.viem.assertions.revertWithCustomErrorWithArgs(
       trigger.write.cancelOrder([orderId], { account: executor.account }),
