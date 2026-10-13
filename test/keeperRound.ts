@@ -87,7 +87,7 @@ describe("keeper round: an order of its own, before and at the target price", ()
     );
     assert.equal(
       lines[3],
-      "1970-01-01T00:00:00.000Z order=- action=round-end reason=done filled=1 skipped=1 errors=0",
+      "1970-01-01T00:00:00.000Z order=- action=round-end reason=done activated=0 filled=1 skipped=1 errors=0",
     );
   });
 });

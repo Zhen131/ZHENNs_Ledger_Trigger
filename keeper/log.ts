@@ -17,6 +17,7 @@ export const Action = {
   RoundStart: "round-start",
   RoundEnd: "round-end",
   Skip: "skip",
+  Activate: "activated",
   Fill: "filled",
   Error: "error",
 } as const;

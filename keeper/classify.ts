@@ -1,6 +1,7 @@
-// Sorts out what went wrong when checking or sending a fill: skip the order
-// (the contract refused it, which is normal, for example when someone else
-// filled or cancelled it first) or report an error (the node itself failed).
+// Sorts out what went wrong when checking or sending a fill or an activation:
+// skip the order (the contract refused it, which is normal, for example when
+// someone else filled, activated or cancelled it first) or report an error
+// (the node itself failed).
 //
 // | What happened                                          | Verdict | Logged          |
 // | ------------------------------------------------------ | ------- | --------------- |
